@@ -1,123 +1,125 @@
 """
-Classes for reading Metronix time series and calibration data
+Classes for reading Metronix time series data
 """
+from loguru import logger
 from typing import Dict, Any
-from logging import getLogger
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import numpy as np
 import pandas as pd
-
-from resistics.common import DatasetHeaders
-from resistics.time import TimeReader, TimeData, get_time_headers
-
-logger = getLogger(__name__)
+from resistics.time import TimeMetadata, TimeData, TimeReader
 
 
 class TimeReaderATS(TimeReader):
     r"""Data reader for ATS formatted data
 
-    For ATS files, header information is XML formatted. The end time in ATS header files is actually one sample past the time of the last sample. The dataReader handles this and gives an end time corresponding to the actual time of the last sample.
+    For ATS files, header information is XML formatted. The end time in ATS 
+    header files is actually one sample past the time of the last sample.
+    TimeReaderATS handles this and gives a last time corresponding to the actual
+    timestamp of the last sample.
 
     Notes
     -----
-    The raw data units for ATS data are in counts. To get data in field units, ATS data is first multipled by the least significat bit (lsb) defined in the header files,
+    The raw data units for ATS data are in counts. To get data in field units, 
+    ATS data is first multipled by the least significat bit (lsb) defined in the
+    metadata files,
 
     .. math::
 
         data = data * lsb,
 
-    giving data in mV. The lsb includes the gain removal, so no separate gain removal needs to be performed.
+    giving data in mV. The lsb includes the gain removal, so no separate gain 
+    removal needs to be performed.
 
-    For electrical channels, there is additional step of dividing by the electrode spacing, which is provided in metres. The extra factor of a 1000 is to convert this to km to give mV/km for electric channels
+    For electrical channels, there is additional step of dividing by the 
+    electrode spacing, which is provided in metres. The extra factor of a 1000 
+    is to convert this to km to give mV/km for electric channels
 
     .. math::
 
         data = \frac{1000 * data}{spacing}
 
-    Finally, to get magnetic channels in nT, the magnetic channels need to be calibrated.
+    Finally, to get magnetic channels in nT, the magnetic channels need to be 
+    calibrated.
     """
 
-    def check(self) -> bool:
+    extension = ".ats"
+
+    def read_metadata(self, dir_path: Path) -> TimeMetadata:
         """
-        Checks before reading a dataset
+        Read the time series data metadata and return
+
+        Parameters
+        ----------
+        dir_path : Path
+            Path to time series data directory
 
         Returns
         -------
-        bool
-            True if all checks are passed and data can be read
+        TimeMetadata
+            Metadata for time series data
+
+        Raises
+        ------
+        TimeDataReadError
+            If extension is not defined
+        MetadataReadError
+            If incorrect number of xml files found
+        MetadataReadError
+            If there is a mismatch between number of channels and actual
+            channels found
+        MetadataReadError
+            If there is a mismatch between the number of samples calculated from
+            the first and last times and the number of samples provided for each
+            channel
+        TimeDataReadError
+            If not all data files exist
+        TimeDataReadError
+            if the data files have the wrong extension
         """
-        xml_files = list(self.dir_path.glob("*.xml"))
+        from resistics.errors import MetadataReadError, TimeDataReadError
+        from resistics.time import get_time_metadata
+
+        if self.extension is None:
+            raise TimeDataReadError(dir_path, "No data file extension defined")
+
+        xml_files = list(dir_path.glob("*.xml"))
         if len(xml_files) != 1:
-            logger.error(f"Number of XML files {len(xml_files)} must be 1")
-            return False
-        header_path = xml_files[0]
-        try:
-            headers = self.read_headers(header_path)
-        except:
-            logger.error("Unable to read headers from XML file")
-            return False
+            raise MetadataReadError(dir_path, "> 1 xml file in data directory")
+        metadata_path = xml_files[0]
+        root = ET.parse(metadata_path).getroot()
+        time_dict = self._read_common_metadata(root)
+        chans_dict = self._read_chans_metadata(metadata_path, root)
+        chans = list(chans_dict.keys())
+        if time_dict["n_chans"] != len(chans_dict):
+            raise MetadataReadError(
+                metadata_path,
+                f"Mismatch between n_chans {len(chans_dict)} and channels {chans}",
+            )
+        time_dict["chans"] = chans
+        # check consistency in number of channels
+        for chan_metadata in chans_dict.values():
+            if time_dict["n_samples"] != chan_metadata["n_samples"]:
+                raise MetadataReadError(metadata_path, "Mismatch in number of samples")
+        metadata = get_time_metadata(time_dict, chans_dict)
 
-        self.headers = headers
-        chk_files = True
-        for chan in self.headers.chans:
-            chan_path = self.dir_path / self.headers[chan, "data_files"]
-            if not chan_path.exists():
-                logger.error(f"{chan} data file {chan_path.name} not found")
-                chk_files = False
-        if not chk_files:
-            return False
-        logger.info(f"Passed checks and successfully read headers from {header_path}")
-        return True
+        if not self._check_data_files(dir_path, metadata):
+            raise TimeDataReadError(dir_path, "All data files do not exist")
+        if not self._check_extensions(dir_path, metadata):
+            raise TimeDataReadError(dir_path, f"Data file suffix not {self.extension}")
+        return metadata
 
-    def read_headers(self, header_path: Path) -> DatasetHeaders:
+    def _read_common_metadata(self, root: ET.Element) -> Dict[str, Any]:
         """
-        Read the time series data headers and return
+        Read common time metadata from the XML file
 
-        Recall, for Metronix headers, the stop time is not the timestamp of the last sample, but instead the time of the next sample.
+        .. note::
+
+            Metronix stop time is the timestamp after the last sample. This is
+            corrected here.
 
         Parameters
         ----------
-        header_path : Path
-            Header
-
-        Returns
-        -------
-        Union[TimeHeaders, None]
-            TimeHeaders if reading was successful, else None
-        """
-        root = ET.parse(header_path).getroot()
-        dataset_headers = self._read_dataset_headers(header_path, root)
-        chan_headers = self._read_chan_headers(header_path, root)
-        chans = list(chan_headers.keys())
-        # check consistent number of chans between dates and data files
-        print("Here1")
-        first_time = dataset_headers["first_time"]
-        print("Here2")
-        last_time = dataset_headers["last_time"]
-        print("Here3")
-        dt = dataset_headers["dt"]
-        print("Here4")
-        n_samples = int(((last_time - first_time) / pd.Timedelta(dt, "s")) + 1)
-        print(dataset_headers)
-        print(chan_headers)
-        print(n_samples)
-        for chan in chan_headers:
-            print(chan_headers[chan]["n_samples"])
-            assert n_samples == chan_headers[chan]["n_samples"]
-        dataset_headers["n_samples"] = chan_headers[chans[0]]["n_samples"]
-        return get_time_headers(dataset_headers, chan_headers)
-
-    def _read_dataset_headers(
-        self, header_path: Path, root: ET.Element
-    ) -> Dict[str, Any]:
-        """
-        Read dataset headers from the XML file
-
-        Parameters
-        ----------
-        header_path: Path
-            The path to the header file
         root : ET.Element
             Root element of XML file
 
@@ -126,34 +128,39 @@ class TimeReaderATS(TimeReader):
         Dict[str, Any]
             Dictionary of dataset headers
         """
+        from resistics.sampling import to_datetime, to_timedelta, to_n_samples
+
         rec_key = "./recording"
         glo_key = "./input/ADU07Hardware/global_config"
         # recording section
         rec = root.find(rec_key)
         first_time = rec.find("start_date").text + " " + rec.find("start_time").text
-        stop_time = rec.find("stop_date").text + " " + rec.find("stop_time").text
+        last_time = rec.find("stop_date").text + " " + rec.find("stop_time").text
         # global config section
         glo = rec.find(glo_key)
-        n_chans = glo.find("meas_channels").text
         fs = float(glo.find("sample_freq").text)
-        dt = 1 / fs
+        n_chans = int(glo.find("meas_channels").text)
+        # convert to datetime formats
+        first_time = to_datetime(first_time)
+        last_time = to_datetime(last_time) - to_timedelta(1 / fs)
+        n_samples = to_n_samples(last_time - first_time, fs)
         return {
             "fs": fs,
-            "dt": dt,
-            "first_time": pd.Timestamp(first_time),
-            "last_time": pd.Timestamp(stop_time) - pd.Timedelta(dt, "s"),
             "n_chans": n_chans,
+            "n_samples": n_samples,
+            "first_time": first_time,
+            "last_time": last_time,
         }
 
-    def _read_chan_headers(
-        self, header_path: Path, root: ET.Element
+    def _read_chans_metadata(
+        self, metadata_path: Path, root: ET.Element
     ) -> Dict[str, Dict[str, Any]]:
         """
-        Read channel headers
+        Read channel metadata
 
         Parameters
         ----------
-        header_path: Path
+        metadata_path: Path
             The path to the header file
         root : ET.Element
             Root element of XML file
@@ -165,14 +172,14 @@ class TimeReaderATS(TimeReader):
 
         Raises
         ------
-        HeaderReadError
+        MetadataReadError
             Failed to find recording outputs channel information (wrong key)
-        HeaderReadError
+        MetadataReadError
             No channel information found in recording outputs channel information
-        HeaderReadError
+        MetadataReadError
             Mismatch between input and output channel sections
         """
-        from resistics.errors import HeaderReadError
+        from resistics.errors import MetadataReadError
 
         chan_input_key = "./recording/input/ADU07Hardware/channel_config/channel"
         chan_output_key = "./recording/output/"
@@ -182,62 +189,88 @@ class TimeReaderATS(TimeReader):
             chan_outputs = chan_outputs.find(".//ATSWriter")
             chan_outputs = chan_outputs.findall("configuration/channel")
         except:
-            raise HeaderReadError(
-                header_path, f"Failed to read channel data from {chan_output_key}"
+            raise MetadataReadError(
+                metadata_path, f"Failed to read channel data from {chan_output_key}"
             )
         if chan_outputs is None or len(chan_outputs) == 0:
-            raise HeaderReadError(
-                header_path, f"No channels found in {chan_output_key}"
+            raise MetadataReadError(
+                metadata_path, f"No channels found in {chan_output_key}"
             )
         if len(chan_outputs) != len(chan_inputs):
-            raise HeaderReadError(
-                header_path,
+            raise MetadataReadError(
+                metadata_path,
                 f"Channel mismatch between {chan_input_key}, {chan_output_key}",
             )
 
-        chan_headers = {}
+        chans_dict = {}
         for chan_in, chan_out in zip(chan_inputs, chan_outputs):
-            chan_header = {}
+            chan_metadata = {}
             # out section
             chan = chan_out.find("channel_type").text
-            chan_header["data_files"] = chan_out.find("ats_data_file").text
-            chan_header["n_samples"] = int(chan_out.find("num_samples").text)
-            chan_header["sensor"] = chan_out.find("sensor_type").text
-            chan_header["serial"] = chan_out.find("sensor_sernum").text
-            chan_header["scaling"] = chan_out.find("ts_lsb").text
+            chan_metadata["data_files"] = chan_out.find("ats_data_file").text
+            chan_metadata["n_samples"] = int(chan_out.find("num_samples").text)
+            chan_metadata["sensor"] = chan_out.find("sensor_type").text
+            chan_metadata["serial"] = chan_out.find("sensor_sernum").text
+            chan_metadata["scaling"] = chan_out.find("ts_lsb").text
             x1 = float(chan_out.find("pos_x1").text)
             x2 = float(chan_out.find("pos_x2").text)
             y1 = float(chan_out.find("pos_y1").text)
             y2 = float(chan_out.find("pos_y2").text)
             z1 = float(chan_out.find("pos_z1").text)
             z2 = float(chan_out.find("pos_z2").text)
-            chan_header["dx"] = abs(x1) + abs(x2)
-            chan_header["dy"] = abs(y1) + abs(y2)
-            chan_header["dz"] = abs(z1) + abs(z2)
+            chan_metadata["dx"] = abs(x1) + abs(x2)
+            chan_metadata["dy"] = abs(y1) + abs(y2)
+            chan_metadata["dz"] = abs(z1) + abs(z2)
             # in section
-            chan_header["gain1"] = chan_in.find("gain_stage1").text
-            chan_header["gain2"] = chan_in.find("gain_stage2").text
-            chan_header["hchopper"] = chan_in.find("hchopper").text
-            chan_header["echopper"] = chan_in.find("echopper").text
+            chan_metadata["gain1"] = chan_in.find("gain_stage1").text
+            chan_metadata["gain2"] = chan_in.find("gain_stage2").text
+            chan_metadata["hchopper"] = chan_in.find("hchopper").text
+            chan_metadata["echopper"] = chan_in.find("echopper").text
             # add data
-            chan_headers[chan] = chan_header
-        return chan_headers
+            chans_dict[chan] = chan_metadata
+        return chans_dict
 
-    def read_data(self, read_from: int, read_to: int) -> TimeData:
+    def _check_data_files(self, dir_path: Path, metadata: TimeMetadata) -> bool:
+        """Check all data files in TimeMetadata exist"""
+        from resistics.common import is_file
+
+        chk = True
+        for chan_metadata in metadata.chans_metadata.values():
+            for data_file in chan_metadata.data_files:
+                if not is_file(dir_path / data_file):
+                    logger.debug(f"Data file {data_file} does not exist in {dir_path}")
+                    chk = False
+        return chk
+
+    def _check_extensions(self, dir_path: Path, metadata: TimeMetadata) -> bool:
+        """Check the data files have the correct extensions"""
+        chk = True
+        for chan_metadata in metadata.chans_metadata.values():
+            for data_file in chan_metadata.data_files:
+                if (dir_path / data_file).suffix != self.extension:
+                    logger.debug(f"Extension of {data_file} != {self.extension}")
+                    chk = False
+        return chk
+
+    def read_data(
+        self, dir_path: Path, metadata: TimeMetadata, read_from: int, read_to: int
+    ) -> TimeData:
         """
         Get unscaled data from an ATS file
 
-        The data units for ATS and internal data formats are as follows:
-
-        - ATS data format has raw data in counts.
-        - The raw data unit of the internal format is dependent on what happened to the data before writing it out in the internal format. If the channel header scaling_applied is set to True, no scaling happens in either getUnscaledSamples or getPhysicalSamples. However, if the channel header scaling_applied is set to False, the internal format data will be treated like ATS data, meaning raw data in counts.
+        The raw data units for ATS are counts.
 
         Other notes:
 
-        - ATS files have a header of size 1024 bytes. This offset is applied when reading data.
+        - ATS files have a header of size 1024 bytes
+        - A byte offset of 1024 is therefore applied when reading data
 
         Parameters
         ----------
+        dir_path : path
+            The directory path to read from
+        metadata : TimeMetadata
+            Time series data metadata
         read_from : int
             Sample to read data from
         read_to : int
@@ -248,56 +281,59 @@ class TimeReaderATS(TimeReader):
         TimeData
             A TimeData instance
         """
-        from resistics.common import ProcessHistory
-
-        assert self.headers is not None
-
         dtype = np.int32
         byteoff = 1024 + np.dtype(dtype).itemsize * read_from
-        chans = self.headers.chans
         n_samples = read_to - read_from + 1
 
-        messages = [f"Reading raw data from {self.dir_path}"]
-        messages.append(f"Sampling rate {self.headers['fs']} Hz")
+        messages = [f"Reading raw data from {dir_path}"]
+        messages.append(f"Sampling rate {metadata.fs} Hz")
         messages.append(f"Reading samples {read_from} to {read_to}")
-        data = np.empty(shape=(len(chans), n_samples))
-        for idx, chan in enumerate(chans):
-            chan_path = self.dir_path / self.headers[chan, "data_files"]
+        data = np.empty(shape=(len(metadata.chans), n_samples))
+        for idx, chan in enumerate(metadata.chans):
+            chan_path = dir_path / metadata.chans_metadata[chan].data_files[0]
             messages.append(f"Reading data for {chan} from {chan_path.name}")
             data[idx] = np.memmap(
                 chan_path, dtype=dtype, mode="r", offset=byteoff, shape=(n_samples)
             )
-        headers = self._get_return_headers(read_from, read_to)
-        messages.append(f"Time range {headers['first_time']} to {headers['last_time']}")
-        record = self._get_process_record(messages)
-        logger.info(f"Data successfully read from {self.dir_path}")
-        return TimeData(headers, chans, data, ProcessHistory([record]))
+        metadata = self._get_return_metadata(metadata, read_from, read_to)
+        messages.append(f"From sample, time: {read_from}, {str(metadata.first_time)}")
+        messages.append(f"To sample, time: {read_to}, {str(metadata.last_time)}")
+        metadata.history.add_record(self._get_record(messages))
+        logger.info(f"Data successfully read from {dir_path}")
+        return TimeData(metadata, data)
 
     def scale_data(self, time_data: TimeData) -> TimeData:
         r"""
         Get ATS data in physical units
 
-        Resistics will always provide physical samples in field units. That means:
+        Resistics will always provide physical samples in field units. That 
+        means:
 
         - Electrical channels in mV/km
         - Magnetic channels in mV
         - To get magnetic fields in nT, calibration needs to be performed
 
-        The raw data units for ATS data are in counts. To get data in field units, ATS data is first multipled by the least significat bit (lsb) defined in the header files,
+        The raw data units for ATS data are in counts. To get data in field 
+        units, ATS data is first multipled by the least significat bit (lsb) 
+        defined in the header files,
 
         .. math::
 
             data = data * lsb,
 
-        giving data in mV. The lsb includes the gain removal, so no separate gain removal needs to be performed.
+        giving data in mV. The lsb includes the gain removal, so no separate 
+        gain removal needs to be performed.
 
-        For electrical channels, there is additional step of dividing by the electrode spacing, which is provided in metres. The extra factor of a 1000 is to convert this to km to give mV/km for electric channels
+        For electrical channels, there is additional step of dividing by the 
+        electrode spacing, which is provided in metres. The extra factor of a 
+        1000 is to convert this to km to give mV/km for electric channels
 
         .. math::
 
             data = \frac{1000 * data}{spacing}
 
-        To get magnetic channels in nT, the magnetic channels need to be calibrated.
+        To get magnetic channels in nT, the magnetic channels need to be
+        calibrated.
 
         Parameters
         ----------
@@ -309,20 +345,21 @@ class TimeReaderATS(TimeReader):
         TimeData
             TimeData scaled to give physically meaningful units
         """
+        logger.info("Applying scaling to data to give field units")
         messages = ["Scaling raw data to physical units"]
-        for chan in time_data.chans:
-            lsb = self.headers[chan, "scaling"]
+        for chan in time_data.metadata.chans:
+            chan_metadata = time_data.metadata.chans_metadata[chan]
+            lsb = chan_metadata.scaling
             time_data[chan] = time_data[chan] * lsb
             messages.append(f"Scaling {chan} by least significant bit {lsb}")
             if chan == "Ex":
-                dx_km = self.headers[chan, "dx"] / 1000
+                dx_km = chan_metadata.dx / 1000
                 time_data[chan] = time_data[chan] / dx_km
                 messages.append(f"Dividing {chan} by dipole length {dx_km} km")
             if chan == "Ey":
-                dy_km = self.headers[chan, "dy"] / 1000
+                dy_km = chan_metadata.dy / 1000
                 time_data[chan] = time_data[chan] / dy_km
                 messages.append(f"Dividing {chan} by dipole length {dy_km} km")
-        record = self._get_process_record(messages)
-        time_data.history.add_record(record)
-        logger.info("Scaling applied to time data")
+        record = self._get_record(messages)
+        time_data.metadata.history.add_record(record)
         return time_data
