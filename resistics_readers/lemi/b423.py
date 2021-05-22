@@ -75,7 +75,8 @@ def make_subdir_B423_metadata(
     dy : float, optional
         Distance between y electrodes
     folders : List, optional
-        An optional list of subfolders
+        An optional list of subfolders, by default None. If None, all the
+        subfolders will be processed
     """
     from resistics.common import dir_subdirs
 
@@ -98,7 +99,7 @@ def make_B423_metadata(
     dy: float = 1,
 ) -> None:
     """
-    Read a single B423 measurement directory and construct headers
+    Read a single B423 measurement directory, construct and write out metadata
 
     Parameters
     ----------
@@ -131,7 +132,7 @@ def make_B423_metadata(
 
 def _get_B423_metadata_list(dir_path: Path, fs: float) -> List[TimeMetadataB423]:
     """
-    Get list of TimeMetadataB423 for each data file
+    Get list of TimeMetadataB423, one for each data file
 
     Parameters
     ----------
@@ -325,10 +326,11 @@ class TimeReaderB423(TimeReader):
     - microvolts for the electric channels
     - millivolts for the magnetic with the gain applied
 
-    Which is equivalent to still applying the scalings in the B423 headers
+    Which is equivalent to applying the scalings in the B423 headers
 
     With apply_scaling True, the following additional scaling will be applied:
 
+    - Electric channels converted to mV
     - Dipole length corrections are applied to electric channels
     - Magnetic channel gains are removed
 
@@ -462,7 +464,7 @@ class TimeReaderB423(TimeReader):
 
         messages = [f"Reading raw data from {dir_path}"]
         messages.append(f"Sampling rate {metadata.fs} Hz")
-        # loop over RAW files and read data
+        # loop over B423 files and read data
         df_to_read = samples_to_files(dir_path, metadata, read_from, read_to)
         data = np.empty(shape=(metadata.n_chans, n_samples), dtype=dtype)
         sample = 0
@@ -525,7 +527,7 @@ class TimeReaderB423(TimeReader):
             f"Unpacking {n_bytes} bytes, format {record_format}, size {record_size}"
         )
         return np.array(
-            [x[2:7] for x in struct.iter_unpack(record_format, data_bytes)],
+            [x[2 : 2 + n_chans] for x in struct.iter_unpack(record_format, data_bytes)],
             dtype=np.float32,
         ).T
 
