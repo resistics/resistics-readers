@@ -334,7 +334,7 @@ class TimeReaderB423(TimeReader):
     - Dipole length corrections are applied to electric channels
     - Magnetic channel gains are removed
 
-    .. notes::
+    .. note::
 
         For more information about Lemi B423 format, please see:
         http://lemisensors.com/?p=485

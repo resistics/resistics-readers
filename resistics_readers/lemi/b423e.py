@@ -199,7 +199,7 @@ class TimeReaderB423E(TimeReaderB423):
     - Electric channels converted to mV
     - Dipole length corrections are applied to electric channels
 
-    .. notes::
+    .. note::
 
         For more information about Lemi B423 format, please see:
         http://lemisensors.com/?p=485
