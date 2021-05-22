@@ -4,23 +4,23 @@ Classes for reading Metronix time series data
 from loguru import logger
 from typing import Dict, Any
 from pathlib import Path
-import xml.etree.ElementTree as ET
+from xml.etree.ElementTree import Element  # noqa: S405
+import defusedxml.ElementTree as ET
 import numpy as np
-import pandas as pd
 from resistics.time import TimeMetadata, TimeData, TimeReader
 
 
 class TimeReaderATS(TimeReader):
     r"""Data reader for ATS formatted data
 
-    For ATS files, header information is XML formatted. The end time in ATS 
+    For ATS files, header information is XML formatted. The end time in ATS
     header files is actually one sample past the time of the last sample.
     TimeReaderATS handles this and gives a last time corresponding to the actual
     timestamp of the last sample.
 
     Notes
     -----
-    The raw data units for ATS data are in counts. To get data in field units, 
+    The raw data units for ATS data are in counts. To get data in field units,
     ATS data is first multipled by the least significat bit (lsb) defined in the
     metadata files,
 
@@ -28,18 +28,18 @@ class TimeReaderATS(TimeReader):
 
         data = data * lsb,
 
-    giving data in mV. The lsb includes the gain removal, so no separate gain 
+    giving data in mV. The lsb includes the gain removal, so no separate gain
     removal needs to be performed.
 
-    For electrical channels, there is additional step of dividing by the 
-    electrode spacing, which is provided in metres. The extra factor of a 1000 
+    For electrical channels, there is additional step of dividing by the
+    electrode spacing, which is provided in metres. The extra factor of a 1000
     is to convert this to km to give mV/km for electric channels
 
     .. math::
 
         data = \frac{1000 * data}{spacing}
 
-    Finally, to get magnetic channels in nT, the magnetic channels need to be 
+    Finally, to get magnetic channels in nT, the magnetic channels need to be
     calibrated.
     """
 
@@ -109,7 +109,7 @@ class TimeReaderATS(TimeReader):
             raise TimeDataReadError(dir_path, f"Data file suffix not {self.extension}")
         return metadata
 
-    def _read_common_metadata(self, root: ET.Element) -> Dict[str, Any]:
+    def _read_common_metadata(self, root: Element) -> Dict[str, Any]:
         """
         Read common time metadata from the XML file
 
@@ -120,7 +120,7 @@ class TimeReaderATS(TimeReader):
 
         Parameters
         ----------
-        root : ET.Element
+        root : Element
             Root element of XML file
 
         Returns
@@ -153,7 +153,7 @@ class TimeReaderATS(TimeReader):
         }
 
     def _read_chans_metadata(
-        self, metadata_path: Path, root: ET.Element
+        self, metadata_path: Path, root: Element
     ) -> Dict[str, Dict[str, Any]]:
         """
         Read channel metadata
@@ -162,7 +162,7 @@ class TimeReaderATS(TimeReader):
         ----------
         metadata_path: Path
             The path to the header file
-        root : ET.Element
+        root : Element
             Root element of XML file
 
         Returns
@@ -188,7 +188,7 @@ class TimeReaderATS(TimeReader):
             chan_outputs = root.find(chan_output_key)
             chan_outputs = chan_outputs.find(".//ATSWriter")
             chan_outputs = chan_outputs.findall("configuration/channel")
-        except:
+        except Exception:
             raise MetadataReadError(
                 metadata_path, f"Failed to read channel data from {chan_output_key}"
             )
@@ -288,7 +288,7 @@ class TimeReaderATS(TimeReader):
         messages = [f"Reading raw data from {dir_path}"]
         messages.append(f"Sampling rate {metadata.fs} Hz")
         messages.append(f"Reading samples {read_from} to {read_to}")
-        data = np.empty(shape=(len(metadata.chans), n_samples))
+        data = np.empty(shape=(metadata.n_chans, n_samples))
         for idx, chan in enumerate(metadata.chans):
             chan_path = dir_path / metadata.chans_metadata[chan].data_files[0]
             messages.append(f"Reading data for {chan} from {chan_path.name}")
@@ -306,26 +306,26 @@ class TimeReaderATS(TimeReader):
         r"""
         Get ATS data in physical units
 
-        Resistics will always provide physical samples in field units. That 
+        Resistics will always provide physical samples in field units. That
         means:
 
         - Electrical channels in mV/km
         - Magnetic channels in mV
         - To get magnetic fields in nT, calibration needs to be performed
 
-        The raw data units for ATS data are in counts. To get data in field 
-        units, ATS data is first multipled by the least significat bit (lsb) 
+        The raw data units for ATS data are in counts. To get data in field
+        units, ATS data is first multipled by the least significat bit (lsb)
         defined in the header files,
 
         .. math::
 
             data = data * lsb,
 
-        giving data in mV. The lsb includes the gain removal, so no separate 
+        giving data in mV. The lsb includes the gain removal, so no separate
         gain removal needs to be performed.
 
-        For electrical channels, there is additional step of dividing by the 
-        electrode spacing, which is provided in metres. The extra factor of a 
+        For electrical channels, there is additional step of dividing by the
+        electrode spacing, which is provided in metres. The extra factor of a
         1000 is to convert this to km to give mV/km for electric channels
 
         .. math::
