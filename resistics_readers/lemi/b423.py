@@ -284,14 +284,13 @@ def _merge_metadata(
     # channel headers
     data_files = [x.data_file for x in metadata_list]
     sensors = {"Hx": hx_sensor, "Hy": hy_sensor, "Hz": hz_sensor, "Ex": "0", "Ey": "0"}
-    posX2 = {"Hx": 1, "Hy": 1, "Hz": 1, "Ex": dx, "Ey": 1}
-    posY2 = {"Hx": 1, "Hy": 1, "Hz": 1, "Ex": 1, "Ey": dy}
-
+    posX = {"Hx": 1, "Hy": 1, "Hz": 1, "Ex": dx, "Ey": 1}
+    posY = {"Hx": 1, "Hy": 1, "Hz": 1, "Ex": 1, "Ey": dy}
     for chan in metadata.chans:
         metadata.chans_metadata[chan].data_files = data_files
         metadata.chans_metadata[chan].gain1 = h_gain if is_magnetic(chan) else 1
-        metadata.chans_metadata[chan].dx = posX2[chan]
-        metadata.chans_metadata[chan].dy = posY2[chan]
+        metadata.chans_metadata[chan].dx = posX[chan]
+        metadata.chans_metadata[chan].dy = posY[chan]
         metadata.chans_metadata[chan].serial = sensors[chan]
     return metadata
 
