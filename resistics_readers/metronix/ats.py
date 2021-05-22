@@ -80,9 +80,6 @@ class TimeReaderATS(TimeReader):
         from resistics.errors import MetadataReadError, TimeDataReadError
         from resistics.time import get_time_metadata
 
-        if self.extension is None:
-            raise TimeDataReadError(dir_path, "No data file extension defined")
-
         xml_files = list(dir_path.glob("*.xml"))
         if len(xml_files) != 1:
             raise MetadataReadError(dir_path, "> 1 xml file in data directory")
@@ -229,28 +226,6 @@ class TimeReaderATS(TimeReader):
             # add data
             chans_dict[chan] = chan_metadata
         return chans_dict
-
-    def _check_data_files(self, dir_path: Path, metadata: TimeMetadata) -> bool:
-        """Check all data files in TimeMetadata exist"""
-        from resistics.common import is_file
-
-        chk = True
-        for chan_metadata in metadata.chans_metadata.values():
-            for data_file in chan_metadata.data_files:
-                if not is_file(dir_path / data_file):
-                    logger.debug(f"Data file {data_file} does not exist in {dir_path}")
-                    chk = False
-        return chk
-
-    def _check_extensions(self, dir_path: Path, metadata: TimeMetadata) -> bool:
-        """Check the data files have the correct extensions"""
-        chk = True
-        for chan_metadata in metadata.chans_metadata.values():
-            for data_file in chan_metadata.data_files:
-                if (dir_path / data_file).suffix != self.extension:
-                    logger.debug(f"Extension of {data_file} != {self.extension}")
-                    chk = False
-        return chk
 
     def read_data(
         self, dir_path: Path, metadata: TimeMetadata, read_from: int, read_to: int

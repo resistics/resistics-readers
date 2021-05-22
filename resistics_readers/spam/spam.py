@@ -347,6 +347,13 @@ class TimeReaderXTR(TimeReaderRAW):
         -------
         TimeMetadataMerge
             Merged TimeMetadataXTR
+
+        Raises
+        ------
+        TimeDataReadError
+            If not all data files exist
+        TimeDataReadError
+            If the extension of the data files is incorrect
         """
         from resistics.errors import MetadataReadError, TimeDataReadError
         from resistics_readers.multifile import validate_consistency
@@ -361,7 +368,6 @@ class TimeReaderXTR(TimeReaderRAW):
             TimeDataReadError(
                 dir_path, "Mismatch between number data files and XTR files"
             )
-
         metadata_list = []
         for metadata_path in metadata_paths:
             time_metadata = self._read_xtr(metadata_path)
@@ -369,7 +375,13 @@ class TimeReaderXTR(TimeReaderRAW):
         validate_consistency(dir_path, metadata_list)
         validate_continuous(dir_path, metadata_list)
         data_table = self._generate_table(metadata_list)
-        return self._merge_metadata(metadata_list, data_table)
+        metadata = self._merge_metadata(metadata_list, data_table)
+
+        if not self._check_data_files(dir_path, metadata):
+            raise TimeDataReadError(dir_path, "All data files do not exist")
+        if not self._check_extensions(dir_path, metadata):
+            raise TimeDataReadError(dir_path, f"Data file suffix not {self.extension}")
+        return metadata
 
     def _read_xtr(self, xtr_path: Path) -> TimeMetadataXTR:
         """
