@@ -487,7 +487,7 @@ class TimeReaderB423(TimeReader):
             data_read = self._parse_records(metadata.chans, data_bytes)
             data_read = (data_read * mult[:, None]) + add[:, None]
             data[:, sample : sample + n_samples_file] = data_read
-            sample = sample + n_samples_file  # get ready for the next data read
+            sample = sample + n_samples_file
         metadata = self._get_return_metadata(metadata, read_from, read_to)
         messages.append(f"From sample, time: {read_from}, {str(metadata.first_time)}")
         messages.append(f"To sample, time: {read_to}, {str(metadata.last_time)}")
