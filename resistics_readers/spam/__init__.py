@@ -1,4 +1,4 @@
-""""
+"""
 Readers for SPAM data, including
 
 - Readers for time series data

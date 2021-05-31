@@ -1,5 +1,7 @@
 """
-A package with readers for various formats of electromagnetic geophysical time series with an initial focus on magnetotellurics.
+A package with readers for various formats of electromagnetic geophysical time
+series with an initial focus on magnetotellurics.
+
 This package is an extension to resistics and requires the resistics package
 """
 __name__ = "resistics-readers"
