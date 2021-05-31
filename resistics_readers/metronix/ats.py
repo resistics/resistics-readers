@@ -94,10 +94,16 @@ class TimeReaderATS(TimeReader):
                 f"Mismatch between n_chans {len(chans_dict)} and channels {chans}",
             )
         time_dict["chans"] = chans
-        # check consistency in number of channels
-        for chan_metadata in chans_dict.values():
-            if time_dict["n_samples"] != chan_metadata["n_samples"]:
-                raise MetadataReadError(metadata_path, "Mismatch in number of samples")
+        # check consistency in number of samples
+        rec_samples = time_dict["n_samples"]
+        for chan, chan_metadata in chans_dict.items():
+            chan_samples = chan_metadata["n_samples"]
+            if rec_samples != chan_samples:
+                logger.warning(
+                    f"Recording samples {rec_samples} != {chan} samples {chan_samples}"
+                )
+            if rec_samples > chan_samples:
+                raise MetadataReadError("Recording samples > chan samples")
         metadata = get_time_metadata(time_dict, chans_dict)
 
         if not self._check_data_files(dir_path, metadata):
@@ -263,7 +269,7 @@ class TimeReaderATS(TimeReader):
         messages = [f"Reading raw data from {dir_path}"]
         messages.append(f"Sampling rate {metadata.fs} Hz")
         messages.append(f"Reading samples {read_from} to {read_to}")
-        data = np.empty(shape=(metadata.n_chans, n_samples))
+        data = np.empty(shape=(metadata.n_chans, n_samples), dtype=np.float32)
         for idx, chan in enumerate(metadata.chans):
             chan_path = dir_path / metadata.chans_metadata[chan].data_files[0]
             messages.append(f"Reading data for {chan} from {chan_path.name}")
