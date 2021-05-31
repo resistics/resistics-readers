@@ -11,6 +11,26 @@ from resistics.spectra import SpectraMetadata
 
 
 class SensorCalibrationMetronix(SensorCalibrationReader):
+    """
+    Metronix calibration data has the following units
+
+    - F [Hz]
+    - Magnitude [V/nT*Hz]
+    - Phase [deg]
+
+    For both chopper on and off.
+
+    Data is returned with units:
+
+    - F [Hz]
+    - Magnitude [mV/nT]
+    - Phase [radians]
+
+    Static gain is set to 1 as this is already included in the magnitude
+
+    It is recommended to do extension of the calibration data here as the
+    calibration data should be extended in the original units.
+    """
 
     extension: str = ".TXT"
     file_str: str = "$sensor$serial$extension"
@@ -23,22 +43,6 @@ class SensorCalibrationMetronix(SensorCalibrationReader):
     ) -> CalibrationData:
         """
         Read data from metronix calibration file
-
-        Metronix calibration data has the following units
-
-        - F [Hz]
-        - Magnitude [V/nT*Hz]
-        - Phase [deg]
-
-        For both chopper on and off.
-
-        Data is returned with units:
-
-        - F [Hz]
-        - Magnitude [mV/nT]
-        - Phase [radians].
-
-        Static gain is set to 1 as this is already included in the magnitude.
 
         Parameters
         ----------
@@ -131,7 +135,7 @@ class SensorCalibrationMetronix(SensorCalibrationReader):
         else:
             data_lines = self._get_chopper_off_data(file_path, lines)
         # convert lines to data frame
-        data = np.array([x.split() for x in data_lines], dtype=float)
+        data = np.array([x.split() for x in data_lines], dtype=np.float32)
         df = pd.DataFrame(data=data, columns=["frequency", "magnitude", "phase"])
         df = df.set_index("frequency").sort_index()
         if self.extend:
