@@ -1,346 +1,191 @@
-class CalibrationMetronix(SensorCalibrationReader):
-    def __init__(self, dir_path):
-        """Initialise"""
-        super().__init__(dir_path, ["sensor", "serial"], ".txt")
-        self.optional_metadata = {"chopper": False}
+from loguru import logger
+from typing import List, Dict, Any, Tuple
+from pathlib import Path
+import math
+import numpy as np
+import pandas as pd
+from resistics.errors import CalibrationFileNotFound, CalibrationFileReadError
+from resistics.common import is_electric, is_magnetic
+from resistics.calibrate import SensorCalibrationReader, CalibrationData
+from resistics.spectra import SpectraMetadata
 
-    def check_run(self, metadata: Dict[str, Any]) -> bool:
-        """Check to ensure there is sufficient metadata"""
-        for required in self.required_metadata:
-            if required not in metadata:
-                return False
-        if metadata["sensor"] <= 0:
-            return False
-        return True
 
-    def get_names(self, metadata: Dict[str, Any]) -> List[str]:
-        """Get the expected name of the calibrate file for the metadata"""
-        return [f"{metadata['sensor']}{metadata['serial']}.{self.extension}"]
+class SensorCalibrationMetronix(SensorCalibrationReader):
 
-    def read(self, file_path: Path, metadata: Dict[str, Any]) -> CalibrationData:
-        """Read data from metronix calibration file
+    extension: str = ".TXT"
+    file_str: str = "$sensor$serial$extension"
+    extend: bool = True
+    extend_low: float = 0.00001
+    extend_high: float = 1000000
 
-        Notes
-        -----
-        Metronix data is in units: F [Hz], Magnitude [V/nT*Hz], Phase [deg] for both chopper on and off.
-        Data is returned with units: F [Hz], Magnitude [mV/nT], Phase [radians].
+    def run(
+        self, dir_path: Path, metadata: SpectraMetadata, chan: str
+    ) -> CalibrationData:
+        """
+        Read data from metronix calibration file
 
-        Dummy values are entered for serial and sensor as these are not specified in the file. Static gain is set to 1 as this is already included in the magnitude.
+        Metronix calibration data has the following units
+
+        - F [Hz]
+        - Magnitude [V/nT*Hz]
+        - Phase [deg]
+
+        For both chopper on and off.
+
+        Data is returned with units:
+
+        - F [Hz]
+        - Magnitude [mV/nT]
+        - Phase [radians].
+
+        Static gain is set to 1 as this is already included in the magnitude.
+
+        Parameters
+        ----------
+        dir_path : Path
+            Calibration data directory
+        metadata : SpectraMetadata
+            The data metadata
+        chan : str
+            The channel to calibrate
 
         Returns
         -------
         CalibrationData
             A calibration data object
-        """
-        from resistics.common import lines_to_array
-        import math
 
+        Raises
+        ------
+        CalibrationFileNotFound
+            If unable to find the calibration file
+        """
+        file_path = self._get_path(dir_path, metadata, chan)
+        logger.info(f"Searching file {file_path.name} in {dir_path}")
+        if not file_path.exists():
+            raise CalibrationFileNotFound(dir_path, file_path)
+
+        logger.info(f"Reading file {file_path.name}")
         with file_path.open("r") as f:
             lines = f.readlines()
         lines = [x.strip() for x in lines]
+        data_dict = self._read_metadata(lines, metadata, chan)
+        chopper = self._get_chopper(metadata, chan)
+        data_dict["chopper"] = chopper
+        df = self._read_data(file_path, lines, chopper)
+        data_dict["frequency"] = df.index.values.tolist()
+        data_dict["magnitude"] = df["magnitude"].values.tolist()
+        data_dict["phase"] = df["phase"].values.tolist()
+        data_dict["file_path"] = file_path
+        return CalibrationData(**data_dict)
 
-        serial, sensor = self._get_sensor_details(lines)
-        il_chopper_on, il_chopper_off = self._get_chopper_lines(lines)
-        read_from = il_chopper_on if metadata["chopper"] else il_chopper_off
-        data_lines = self._get_data_lines(lines, read_from + 1)
-        # convert lines to data frame
-        data = lines_to_array(data_lines)
-        df = pd.DataFrame(data=data, columns=["frequency", "magnitude", "phase"])
-        # unit manipulation - change V/(nT*Hz) to mV/nT
-        df["magnitude"] = df["magnitude"] * df["frequency"] * 1000
-        # unit manipulation - change phase to radians
-        df["phase"] = df["phase"] * (math.pi / 180)
-        df = df.set_index("frequency").sort_index()
-
-        return CalibrationData(
-            file_path,
-            df,
-            ProcessHistory(),
-            chopper=metadata["chopper"],
-            serial=serial,
-            sensor=sensor,
-            static_gain=1,
-        )
+    def _read_metadata(
+        self, lines: List[str], metadata: SpectraMetadata, chan: str
+    ) -> Dict[str, Any]:
+        """Get the calibration data metadata"""
+        sensor, serial = self._get_sensor_details(lines)
+        return {
+            "serial": serial,
+            "sensor": sensor,
+            "static_gain": 1,
+            "magnitude_unit": "mV/nT",
+            "phase_unit": "radians",
+        }
 
     def _get_sensor_details(self, lines: List[str]) -> Tuple[int, str]:
-        """Get sensor details from lines read in from a Metronix calibration file
-
-        Parameters
-        ----------
-        lines : List[str]
-            A list of strings read in from a Metronix calibration file
-
-        Returns
-        -------
-        serial : int
-            The serial number of the sensor
-        sensor : str
-            The type of sensor
-        """
-        serial = 1
+        """Get sensor and serial details"""
         sensor = ""
-        for line in lines:
-            if "Magnetometer" in line:
-                try:
-                    split1 = line.split(":")[1].strip()
-                    split2 = split1.split()[0]
-                    if "#" in split1:
-                        tmp = split2.split("#")
-                        sensor = tmp[0].strip()
-                        serial = int(tmp[1].strip())
-                    else:
-                        serial = int(split2.strip())
-                    break
-                except:
-                    logger.warning("Unable to read serial number from calibration file")
-        return serial, sensor
+        serial = 1
+        magnetometer = [x for x in lines if "Magnetometer" in x]
+        if len(magnetometer) != 1:
+            return serial, sensor
 
-    def _get_chopper_lines(self, lines: List[str]) -> Tuple[int, int]:
-        """Get the lines indices for starting chopper on and chopper off data
+        magnetometer_line = magnetometer[0]
+        try:
+            split1 = magnetometer_line.split(":")[1].strip()
+            split2 = split1.split()[0]
+            if "#" in split1:
+                tmp = split2.split("#")
+                sensor = tmp[0].strip()
+                serial = int(tmp[1].strip())
+            else:
+                serial = int(split2.strip())
+        except Exception:
+            logger.warning("Unable to read serial number from calibration file")
+        return sensor, serial
 
-        Parameters
-        ----------
-        lines : List[str]
-            A list of strings read in from a Metronix calibration file
+    def _get_chopper(self, metadata: SpectraMetadata, chan: str) -> bool:
+        """True if chopper on, otherwise False"""
+        if is_electric(chan):
+            return metadata.chans_metadata[chan].echopper
+        if is_magnetic(chan):
+            return metadata.chans_metadata[chan].hchopper
+        logger.error(f"Channel {chan} not recognised as either electric or magnetic")
+        return False
 
-        Returns
-        -------
-        il_chopper_on : int
-            Line number for chopper on
-        il_chopper_off : int
-            Line number for chopper off
-        """
-        il_chopper_on: int = 0
-        il_chopper_off: int = 0
+    def _read_data(
+        self, file_path: Path, lines: List[str], chopper: bool
+    ) -> pd.DataFrame:
+        """Read the calibration data"""
+        if chopper:
+            data_lines = self._get_chopper_on_data(file_path, lines)
+        else:
+            data_lines = self._get_chopper_off_data(file_path, lines)
+        # convert lines to data frame
+        data = np.array([x.split() for x in data_lines], dtype=float)
+        df = pd.DataFrame(data=data, columns=["frequency", "magnitude", "phase"])
+        df = df.set_index("frequency").sort_index()
+        if self.extend:
+            df = self._extend_data(df)
+        # unit manipulation - change V/(nT*Hz) to mV/nT
+        df["magnitude"] = df["magnitude"] * df.index.values * 1000
+        # unit manipulation - change phase to radians
+        df["phase"] = df["phase"] * (math.pi / 180)
+        return df
+
+    def _get_chopper_on_data(self, file_path: Path, lines: List[str]) -> List[str]:
+        """Get chopper on data"""
+        chopper_on_line = None
         for il, line in enumerate(lines):
             if "Chopper On" in line:
-                il_chopper_on = il
+                chopper_on_line = il
+                break
+        if chopper_on_line is None:
+            raise CalibrationFileReadError(file_path, "Chopper on line not found")
+        return self._get_data_lines(lines, chopper_on_line + 1)
+
+    def _get_chopper_off_data(self, file_path: Path, lines: List[str]) -> List[str]:
+        """Get chopper off data"""
+        chopper_off_line = None
+        for il, line in enumerate(lines):
             if "Chopper Off" in line:
-                il_chopper_off = il
-        return il_chopper_on, il_chopper_off
+                chopper_off_line = il
+                break
+        if chopper_off_line is None:
+            raise CalibrationFileReadError(file_path, "Chopper off line not found")
+        return self._get_data_lines(lines, chopper_off_line + 1)
 
     def _get_data_lines(self, lines: List[str], idx: int) -> List[str]:
-        """Get the lines of data from the calibration file
-
-        Parameters
-        ----------
-        lines : List[str]
-            List of lines read in from a Metronix calibration file
-        idx : int
-            Index to start reading from
-
-        Returns
-        -------
-        List[str]
-            List of lines with data in them
-        """
+        """Get data lines from the calibration file"""
         data_lines: List = []
         while idx < len(lines) and lines[idx] != "":
             data_lines.append(lines[idx])
             idx += 1
         return data_lines
 
-
-class CalibrationRSP(SensorCalibrationReader):
-    def __init__(self, dir_path):
-        """Initialise"""
-        super().__init__(dir_path, ["sensor", "serial", "chopper"], ".RSP")
-
-    def check_run(self, metadata: Dict[str, Any]) -> bool:
-        """Check to ensure there is sufficient metadata"""
-        for required in self.required_metadata:
-            if required not in metadata:
-                return False
-        if len(metadata["sensor"]) < 5:
-            return False
-        try:
-            int(metadata["sensor"])
-        except:
-            return False
-        return True
-
-    def get_names(self, metadata: Dict[str, Any]) -> List[str]:
-        """Get the expected name of the calibrate file for the metadata"""
-        serial = metadata["serial"]
-        board = "LF" if metadata["chopper"] else "HF"
-        sensor_num = int(metadata["sensor"])
-        names = [
-            f"TYPE-{sensor_num:03d}_BB-ID-{serial:06d}.{self.extension}",
-            f"TYPE-{sensor_num:03d}_{board}-ID-{serial:06d}.{self.extension}",
-        ]
-        return names
-
-    def read(self, file_path: Path, metadata: Dict[str, Any]) -> CalibrationData:
-        """Read data from a RSP calibration file
-
-        Notes
-        -----
-        RSP data is in units: F [Hz], Magnitude [mv/nT], Phase [deg]
-        Data is returned with units: F [Hz], Magnitude [mV/nT], Phase [radians]
-
-        Returns
-        -------
-        CalibrationData
-            A calibration data object
-        """
-        from resistics.common import lines_to_array
-        import math
-
-        with open(file_path, "r") as f:
-            lines = f.readlines()
-        lines = [x.strip() for x in lines]
-
-        serial, sensor = self._get_sensor_details(lines)
-        static_gain = self._get_static_gain(lines)
-        read_from = self._get_read_from(lines)
-        data_lines = self._get_data_lines(lines, read_from + 2)
-        # convert lines to data frame
-        data = lines_to_array(data_lines)
-        df = pd.DataFrame(data=data, columns=["frequency", "magnitude", "phase"])
-        # unit manipulation - change V/(nT*Hz) to mV/nT
-        df["magnitude"] = df["magnitude"] * static_gain
-        # unit manipulation - change phase to radians
-        df["phase"] = df["phase"] * (math.pi / 180)
-        df = df.set_index("frequency").sort_index()
-
-        return CalibrationData(
-            file_path,
-            df,
-            ProcessHistory(),
-            chopper=metadata["chopper"],
-            serial=serial,
-            sensor=sensor,
-            static_gain=1,
-        )
-
-    def _get_sensor_details(self, lines: List[str]) -> Tuple[int, str]:
-        """Get sensor details from the file"""
-        serial: int = 1
-        sensor: str = ""
-        for line in lines:
-            if "induction coil no" in line:
-                split1 = line.split(":")[1]
-                serial = int(split1.split("-")[0].strip())
-            if "SensorType" in line:
-                sensor = line.split()[1]
-        return serial, sensor
-
-    def _get_static_gain(self, lines: List[str]) -> float:
-        static_gain: float = 1.0
-        for line in lines:
-            if "StaticGain" in line:
-                static_gain = float(line.split()[1])
-                return static_gain
-        return static_gain
-
-    def _get_read_from(self, lines: List[str]) -> int:
-        """Get the line number to read from"""
-        for idx, line in enumerate(lines):
-            if "FREQUENCY" in line:
-                return idx + 2
-        raise ValueError("Unable to determine location of data in file")
-
-    def _get_data_lines(self, lines: List[str], idx: int) -> List[str]:
-        """Get the data lines out of the file"""
-        data_lines: List[str] = []
-        while idx < len(lines) and lines[idx] != "":
-            data_lines.append(lines[idx])
-            idx += 1
-        return data_lines
-
-
-class CalibrationRSPX(SensorCalibrationReader):
-    def __init__(self, dir_path: Path):
-        """Initialise"""
-        super().__init__(dir_path, ["sensor", "serial", "chopper"], ".RSPX")
-
-    def check_run(self, metadata: Dict[str, Any]) -> bool:
-        """Check to ensure there is sufficient metadata"""
-        for required in self.required_metadata:
-            if required not in metadata:
-                return False
-        if len(metadata["sensor"]) < 6:
-            return False
-        return True
-
-    def get_names(self, metadata: Dict[str, Any]) -> List[str]:
-        """Get possible calibration file names"""
-        serial = metadata["serial"]
-        board = "LF" if metadata["chopper"] else "HF"
-        sensor_num = int(metadata["sensor"][3:5])
-        names = [
-            f"TYPE-{sensor_num:03d}_BB-ID-{serial:06d}.{self.extension}",
-            f"TYPE-{sensor_num:03d}_{board}-ID-{serial:06d}.{self.extension}",
-        ]
-        return names
-
-    def read(self, file_path: Path, metadata: Dict[str, Any]) -> CalibrationData:
-        """Read data from calibration file
-
-        Notes
-        -----
-        RSPX data is in units: F [Hz], Magnitude [mv/nT], Phase [deg]
-        Data is returned with units: F [Hz], Magnitude [mV/nT], Phase [radians]
-
-        Returns
-        -------
-        CalibrationData
-            A calibration data object
-        """
-        import xml.etree.ElementTree as ET
-        import math
-
-        tree = ET.parse(file_path)
-        root = tree.getroot()
-        serial, sensor = self._get_sensor_details(root)
-        static_gain = self._get_static_gain(root)
-        data_list = self._get_data_list(root)
-        # convert to data frame
-        data = np.array(data_list)
-        df = pd.DataFrame(data=data, columns=["frequency", "magnitude", "phase"])
-        # unit manipulation - change V/(nT*Hz) to mV/nT
-        df["magnitude"] = df["magnitude"] * static_gain
-        # unit manipulation - change phase to radians
-        df["phase"] = df["phase"] * (math.pi / 180)
-        df = df.set_index("frequency").sort_index()
-
-        return CalibrationData(
-            file_path,
-            df,
-            ProcessHistory(),
-            chopper=metadata["chopper"],
-            serial=serial,
-            sensor=sensor,
-            static_gain=1,
-        )
-
-    def _get_sensor_details(self, root) -> Tuple[int, str]:
-        """Get sensor details"""
-        # serial
-        serial: int = 1
-        if root.find("SensorId") is not None:
-            serial = int(root.find("SensorId").text)
-        # sensor
-        sensor: str = ""
-        if root.find("SensorSpecification") is not None:
-            sensor = root.find("SensorSpecification").text
-        return serial, sensor
-
-    def _get_static_gain(self, root) -> float:
-        static_gain: float = 1.0
-        if root.find("StaticGain") is not None:
-            static_gain = float(root.find("StaticGain").text)
-        return static_gain
-
-    def _get_data_list(self, root) -> List[List[float]]:
-        """Get a list of the data"""
-        data_list = []
-        for resp in root.findall("ResponseData"):
-            data_list.append(
-                [
-                    float(resp.get("Frequency")),
-                    float(resp.get("Magnitude")),
-                    float(resp.get("Phase")),
-                ]
+    def _extend_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Extend the calibration data before adjusting units"""
+        if self.extend_low < df.index.min():
+            df = df.append(
+                pd.DataFrame(
+                    data={"magnitude": np.nan, "phase": np.nan},
+                    index=[self.extend_low],
+                )
             )
-        return data_list
+        if self.extend_high > df.index.max():
+            df = df.append(
+                pd.DataFrame(
+                    data={"magnitude": np.nan, "phase": np.nan},
+                    index=[self.extend_high],
+                )
+            )
+        return df.sort_index().ffill().bfill()
