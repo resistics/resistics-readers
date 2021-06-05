@@ -7,6 +7,7 @@ from pathlib import Path
 from xml.etree.ElementTree import Element  # noqa: S405
 import defusedxml.ElementTree as ET
 import numpy as np
+from resistics.sampling import to_datetime, to_timedelta, to_n_samples
 from resistics.time import TimeMetadata, TimeData, TimeReader
 
 
@@ -73,10 +74,6 @@ class TimeReaderATS(TimeReader):
         MetadataReadError
             If there is a mismatch between number of channels and actual
             channels found
-        MetadataReadError
-            If there is a mismatch between the number of samples calculated from
-            the first and last times and the number of samples provided for each
-            channel
         TimeDataReadError
             If not all data files exist
         TimeDataReadError
@@ -100,19 +97,9 @@ class TimeReaderATS(TimeReader):
             )
         time_dict["chans"] = chans
         # check consistency in number of samples
-        rec_samples = time_dict["n_samples"]
-        logger.debug(f"Samples from timestamps = {rec_samples}")
-        for chan, chan_metadata in chans_dict.items():
-            chan_samples = chan_metadata["n_samples"]
-            logger.debug(f"Samples for channel {chan} = {chan_samples}")
-            if rec_samples != chan_samples:
-                logger.warning(
-                    f"Recording samples {rec_samples} != {chan} samples {chan_samples}"
-                )
-            if rec_samples > chan_samples:
-                raise MetadataReadError("Recording samples > chan samples")
-        metadata = get_time_metadata(time_dict, chans_dict)
+        time_dict = self._set_n_samples(time_dict, chans_dict)
 
+        metadata = get_time_metadata(time_dict, chans_dict)
         if not self._check_data_files(dir_path, metadata):
             raise TimeDataReadError(dir_path, "All data files do not exist")
         if not self._check_extensions(dir_path, metadata):
@@ -138,8 +125,6 @@ class TimeReaderATS(TimeReader):
         Dict[str, Any]
             Dictionary of dataset headers
         """
-        from resistics.sampling import to_datetime, to_timedelta, to_n_samples
-
         rec_key = "./recording"
         glo_key = "./input/ADU07Hardware/global_config"
         # recording section
@@ -238,6 +223,45 @@ class TimeReaderATS(TimeReader):
             # add data
             chans_dict[chan] = chan_metadata
         return chans_dict
+
+    def _set_n_samples(
+        self, time_dict: Dict[str, Any], chans_dict: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Check the number of samples
+
+        Parameters
+        ----------
+        time_dict : Dict[str, Any]
+            The time metadata dictionary
+        chans_dict : Dict[Dict[str, Any]]
+            The channel metadata dictionary
+
+        Returns
+        -------
+        Dict[str, Any]
+            Updated time metadata dictionary
+        """
+        rec_samples = time_dict["n_samples"]
+        logger.debug(f"Samples from timestamps = {rec_samples}")
+        chan_samples = {chan: info["n_samples"] for chan, info in chans_dict.items()}
+        logger.debug(f"Number samples from channels = {chan_samples}")
+        if len(set(chan_samples.values())) > 1:
+            logger.warning("Mismatch between channel number of samples")
+        n_samples = min(chan_samples.values())
+        if rec_samples != n_samples:
+            logger.warning("Timestamp samples != channel samples, setting to minimum")
+            time_dict["n_samples"] = min(n_samples, rec_samples)
+            logger.info(f"Updated number of samples = {time_dict['n_samples']}")
+            # recalculate last time
+            duration = to_timedelta(1 / time_dict["fs"]) * (time_dict["n_samples"] - 1)
+            new_last_time = time_dict["first_time"] + duration
+            current_last_time = time_dict["last_time"]
+            logger.info(
+                f"Last time updated {str(current_last_time)} to {str(new_last_time)}"
+            )
+            time_dict["last_time"] = new_last_time
+        return time_dict
 
     def read_data(
         self, dir_path: Path, metadata: TimeMetadata, read_from: int, read_to: int
