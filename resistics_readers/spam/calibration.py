@@ -1,6 +1,7 @@
 from loguru import logger
 from typing import List, Dict, Any, Tuple
 from pathlib import Path
+import re
 import numpy as np
 import pandas as pd
 from xml.etree.ElementTree import Element  # noqa: S405
@@ -16,12 +17,30 @@ class SensorCalibration_RSP_RSPX_Base(SensorCalibrationReader):
     """Base class for RSP and RSPX calibration data readers"""
 
     file_str: str = "Metronix_Coil-----TYPE-$sensor_$chopper-ID-$serial$extension"
+    """The file string to search for. Various parameters will be substituted"""
 
     def _get_path(
-        self, dir_path, chan_metadata: ChanMetadata, chopper_str: str
+        self, dir_path: Path, chan_metadata: ChanMetadata, chopper_str: str
     ) -> Path:
-        """Get the path to the file"""
-        sensor_str = f"{int(chan_metadata.sensor):03d}"
+        """
+        Get the path to the calibration file
+
+        Parameters
+        ----------
+        dir_path : Path
+            The directory path with calibration data
+        chan_metadata : ChanMetadata
+            The channel metadata
+        chopper_str : str
+            The chopper string
+
+        Returns
+        -------
+        Path
+            The file path
+        """
+        sensor_str = re.sub("[^0-9]", "", chan_metadata.sensor)
+        sensor_str = f"{int(sensor_str):03d}"
         serial_str = f"{int(chan_metadata.serial):06d}"
         file_name = self.file_str.replace("$sensor", sensor_str)
         file_name = file_name.replace("$serial", serial_str)
