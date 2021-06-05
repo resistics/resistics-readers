@@ -44,6 +44,11 @@ class TimeReaderATS(TimeReader):
     """
 
     extension = ".ats"
+    """The data file extension"""
+    chan_input_key: str = "./recording/input/ADU07Hardware/channel_config/channel"
+    """The xml path to input channel information"""
+    chan_output_key: str = "./recording/output/ProcessingTree1/output/ATSWriter"
+    """The xml path to output channel information"""
 
     def read_metadata(self, dir_path: Path) -> TimeMetadata:
         """
@@ -96,8 +101,10 @@ class TimeReaderATS(TimeReader):
         time_dict["chans"] = chans
         # check consistency in number of samples
         rec_samples = time_dict["n_samples"]
+        logger.debug(f"Samples from timestamps = {rec_samples}")
         for chan, chan_metadata in chans_dict.items():
             chan_samples = chan_metadata["n_samples"]
+            logger.debug(f"Samples for channel {chan} = {chan_samples}")
             if rec_samples != chan_samples:
                 logger.warning(
                     f"Recording samples {rec_samples} != {chan} samples {chan_samples}"
@@ -184,25 +191,24 @@ class TimeReaderATS(TimeReader):
         """
         from resistics.errors import MetadataReadError
 
-        chan_input_key = "./recording/input/ADU07Hardware/channel_config/channel"
-        chan_output_key = "./recording/output/"
-        chan_inputs = root.findall(chan_input_key)
+        chan_inputs = root.findall(self.chan_input_key)
         try:
-            chan_outputs = root.find(chan_output_key)
-            chan_outputs = chan_outputs.find(".//ATSWriter")
+            chan_outputs = root.find(self.chan_output_key)
             chan_outputs = chan_outputs.findall("configuration/channel")
         except Exception:
             raise MetadataReadError(
-                metadata_path, f"Failed to read channel data from {chan_output_key}"
+                metadata_path,
+                f"Failed to read channel data from {self.chan_output_key}",
             )
+
         if chan_outputs is None or len(chan_outputs) == 0:
             raise MetadataReadError(
-                metadata_path, f"No channels found in {chan_output_key}"
+                metadata_path, f"No channels found in {self.chan_output_key}"
             )
         if len(chan_outputs) != len(chan_inputs):
             raise MetadataReadError(
                 metadata_path,
-                f"Channel mismatch between {chan_input_key}, {chan_output_key}",
+                f"Mismatch between {self.chan_input_key} & {self.chan_output_key}",
             )
 
         chans_dict = {}
