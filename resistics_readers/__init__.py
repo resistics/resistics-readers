@@ -1,13 +1,13 @@
 """
 A package with readers for various formats of electromagnetic geophysical time
-series with an initial focus on magnetotellurics.
+series data with an initial focus on magnetotellurics.
 
 This package is an extension to resistics and requires the resistics package
 """
-__name__ = "resistics-readers"
-# short X.Y version
-xyversion = "0.0.1"
-# release
-release = ".dev1"
-# combined version
-__version__ = "{}{}".format(xyversion, release)
+from importlib.metadata import version, PackageNotFoundError
+
+__name__ = "resistics_readers"
+try:
+    __version__ = version(__name__)
+except PackageNotFoundError:  # pragma: no cover
+    __version__ = "unknown"
