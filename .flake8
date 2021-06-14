@@ -7,4 +7,5 @@ per-file-ignores = tests/*:S101
 # others
 max-line-length = 88
 max-complexity = 10
-max-cognitive-complexity = 12
+max-cognitive-complexity = 10
+max-expression-complexity = 8
