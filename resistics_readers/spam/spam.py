@@ -8,6 +8,42 @@ from resistics.time import TimeMetadata, TimeData, TimeReader
 from resistics_readers.multifile import TimeMetadataSingle, TimeMetadataMerge
 
 
+def update_xtr_data(
+    xtr_data: Dict[str, Any], section: str, key: str, val: str
+) -> Dict[str, Any]:
+    """
+    Decide how to deal with an XTR file entry
+
+    Parameters
+    ----------
+    xtr_data : Dict[str, Any]
+        The dictionary with the existing XTR data
+    section : str
+        The section which has the key, value pair
+    key : str
+        The key
+    val : str
+        the value
+
+    Returns
+    -------
+    Dict[str, Any]
+        The updated XTR dictionary
+    """
+    if key in xtr_data[section] and not isinstance(xtr_data[section][key], list):
+        # the key has already been encountered once but has now reappeared
+        # this now needs to be converted to a list
+        xtr_data[section][key] = [xtr_data[section][key], val]
+    elif key in xtr_data[section]:
+        # a new value for an existing key that is already a list
+        xtr_data[section][key].append(val)
+    else:
+        # a new value for a key that has not appeared before
+        # still unknown whether this will become a list later
+        xtr_data[section][key] = val
+    return xtr_data
+
+
 def read_xtr(xtr_path: Path) -> Dict[str, Any]:
     """
     Function to read an XTR file.
@@ -29,7 +65,7 @@ def read_xtr(xtr_path: Path) -> Dict[str, Any]:
         lines = f.readlines()
     lines = [x.strip().replace("'", "").strip() for x in lines]
     lines = [x for x in lines if x != ""]
-    xtr_data = {}
+    xtr_data: Dict[str, Any] = {}
     section = "GLOBAL"
     for line in lines:
         if line[0] == "[" and line[-1] == "]":
@@ -37,16 +73,7 @@ def read_xtr(xtr_path: Path) -> Dict[str, Any]:
             xtr_data[section] = {}
         else:
             key, val = line.split("=")
-            key = key.strip()
-            val = val.strip()
-            if key in xtr_data[section] and not isinstance(
-                xtr_data[section][key], list
-            ):
-                xtr_data[section][key] = [xtr_data[section][key], val]
-            elif key in xtr_data[section]:
-                xtr_data[section][key].append(val)
-            else:
-                xtr_data[section][key] = val
+            xtr_data = update_xtr_data(xtr_data, section, key.strip(), val.strip())
     return xtr_data
 
 
@@ -236,7 +263,7 @@ class TimeReaderRAW(TimeReader):
         TimeData
             Time data object
         """
-        from resistics_readers.multifile import samples_to_files
+        from resistics_readers.multifile import samples_to_sources
 
         dtype = np.float32
         dtype_size = np.dtype(np.float32).itemsize
@@ -245,13 +272,14 @@ class TimeReaderRAW(TimeReader):
         messages = [f"Reading raw data from {dir_path}"]
         messages.append(f"Sampling rate {metadata.fs} Hz")
         # loop over RAW files and read data
-        df_to_read = samples_to_files(dir_path, metadata, read_from, read_to)
+        data_table = pd.DataFrame(data=metadata.data_table)
+        df_to_read = samples_to_sources(dir_path, data_table, read_from, read_to)
         data = np.empty(shape=(metadata.n_chans, n_samples), dtype=dtype)
         sample = 0
         for data_file, info in df_to_read.iterrows():
             file_from = info.loc["read_from"]
             file_to = info.loc["read_to"]
-            n_samples_file = info.loc["n_samples_file"]
+            n_samples_file = info.loc["n_samples_read"]
             rec_chans = info.loc["rec_chans"]
             data_byte_start = info.loc["data_byte_start"]
 
