@@ -174,21 +174,27 @@ def add_cumulative_samples(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def samples_to_files(
+def samples_to_sources(
     dir_path: Path,
-    metadata: TimeMetadataMerge,
+    df: pd.DataFrame,
     from_sample: int,
     to_sample: int,
 ) -> pd.DataFrame:
     """
-    Get a DataFrame of data files that should be read to cover the sample range
+    Find the data sources for a sample range
+
+    This can be used for a multi-file measurement or for a measurement that is
+    split up into multiple records. It maps a sample range defined by
+    from_sample and to_sample to the sources and returns a DataFrame providing
+    information about the samples that need to be read from each source (file
+    or record) to cover the range.
 
     Parameters
     ----------
     dir_path : Path
         The directory with the data
-    metadata : TimeMetadataMerge
-        The merged metadata
+    df : pd.DataFrame
+        Table of all the sources and their sample ranges
     from_sample : int
         Reading from sample
     to_sample : int
@@ -208,7 +214,6 @@ def samples_to_files(
     """
     from resistics.errors import TimeDataReadError
 
-    df = pd.DataFrame(data=metadata.data_table)
     df = df[~(df["first_sample"] > to_sample)]
     df = df[~(df["last_sample"] < from_sample)]
     # get read from samples
@@ -221,10 +226,10 @@ def samples_to_files(
     df["read_to"] = df["n_samples"] - 1
     adjust_to = df["last_sample"] > to_sample
     df.loc[adjust_to, "read_to"] = to_sample - df["first_sample"]
-    df["n_samples_file"] = df["read_to"] - df["read_from"] + 1
+    df["n_samples_read"] = df["read_to"] - df["read_from"] + 1
 
-    if df["n_samples_file"].sum() != to_sample - from_sample + 1:
-        sum_files = df["n_samples_file"].sum()
+    if df["n_samples_read"].sum() != to_sample - from_sample + 1:
+        sum_files = df["n_samples_read"].sum()
         expected = to_sample - from_sample + 1
         raise TimeDataReadError(
             dir_path, f"Samples to read {sum_files} does not match expected {expected}"
