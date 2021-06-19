@@ -81,10 +81,10 @@ def make_subdir_B423_metadata(
     from resistics.common import dir_subdirs
 
     if folders is None:
-        folders = dir_subdirs(dir_path)
+        folder_paths = dir_subdirs(dir_path)
     else:
-        folders = [dir_path / folder for folder in folders]
-    for folder in folders:
+        folder_paths = [dir_path / folder for folder in folders]
+    for folder in folder_paths:
         make_B423_metadata(folder, fs, hx_sensor, hy_sensor, hz_sensor, h_gain, dx, dy)
 
 
@@ -156,7 +156,7 @@ def _get_B423_metadata_list(dir_path: Path, fs: float) -> List[TimeMetadataB423]
 
 
 def _read_B423_headers(
-    data_path: str,
+    data_path: Path,
     fs: float,
     data_byte_offset: Optional[int] = None,
     record_bytes: Optional[int] = None,
@@ -167,7 +167,7 @@ def _read_B423_headers(
 
     Parameters
     ----------
-    data_path : str
+    data_path : Path
         The data path to the file
     fs : float
         The sampling frequency, Hz
@@ -249,9 +249,9 @@ def _read_B423_ascii_headers(metadata_bytes: bytes) -> Dict[str, float]:
     metadata = {x[0].strip(): float(x[1].strip()) for x in metadata}
     # loxcation information
     location = [x for x in metadata_lines if ("Lat" in x or "Lon" in x or "Alt" in x)]
-    location = {x[0:3]: x[3:].split(",")[0] for x in location}
-    location = {k: float(v.strip()) for k, v in location.items()}
-    metadata.update(location)
+    location_dict = {x[0:3]: x[3:].split(",")[0] for x in location}
+    location_dict = {k: float(v.strip()) for k, v in location.items()}
+    metadata.update(location_dict)
     return metadata
 
 
@@ -457,7 +457,7 @@ class TimeReaderB423(TimeReader):
         TimeData
             Time data object
         """
-        from resistics_readers.multifile import samples_to_files
+        from resistics_readers.multifile import samples_to_sources
 
         dtype = np.float32
         n_samples = read_to - read_from + 1
@@ -465,13 +465,14 @@ class TimeReaderB423(TimeReader):
         messages = [f"Reading raw data from {dir_path}"]
         messages.append(f"Sampling rate {metadata.fs} Hz")
         # loop over B423 files and read data
-        df_to_read = samples_to_files(dir_path, metadata, read_from, read_to)
+        data_table = pd.DataFrame(data=metadata.data_table)
+        df_to_read = samples_to_sources(dir_path, data_table, read_from, read_to)
         data = np.empty(shape=(metadata.n_chans, n_samples), dtype=dtype)
         sample = 0
         for data_file, info in df_to_read.iterrows():
             file_from = info.loc["read_from"]
             file_to = info.loc["read_to"]
-            n_samples_file = info.loc["n_samples_file"]
+            n_samples_file = info.loc["n_samples_read"]
             data_byte_start = info.loc["data_byte_start"]
             mult = np.array([info.loc[B423_MULT[chan]] for chan in metadata.chans])
             add = np.array([info.loc[B423_ADD[chan]] for chan in metadata.chans])
@@ -586,7 +587,7 @@ class TimeReaderB423(TimeReader):
                 time_data[chan] = time_data[chan] / dy_km
                 messages.append(f"Dividing {chan} by dipole length {dy_km:.6f} km")
             if is_magnetic(chan):
-                gain = time_data.metadata.chans_metadata[chan].gain1
+                gain = chan_metadata.gain1
                 time_data[chan] = time_data[chan] / gain
                 messages.append(f"Dividing chan {chan} by {gain} to remove gain")
         record = self._get_record(messages)

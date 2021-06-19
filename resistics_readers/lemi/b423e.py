@@ -21,6 +21,7 @@ from loguru import logger
 from typing import List, Optional, Tuple
 from pathlib import Path
 import numpy as np
+import pandas as pd
 from resistics.time import TimeMetadata, TimeData
 
 from resistics_readers.multifile import validate_consistency, validate_continuous
@@ -75,7 +76,7 @@ def make_sudbir_B423E_metadata(
 
 
 def make_B423E_metadata(
-    dir_path: str,
+    dir_path: Path,
     fs: float,
     chans: Optional[List[str]] = None,
     dx: float = 1,
@@ -86,7 +87,7 @@ def make_B423E_metadata(
 
     Parameters
     ----------
-    dir_path : str
+    dir_path : Path
         Directory path
     fs : float
         The sampling frequency, Hz
@@ -300,7 +301,7 @@ class TimeReaderB423E(TimeReaderB423):
         TimeData
             Time data object
         """
-        from resistics_readers.multifile import samples_to_files
+        from resistics_readers.multifile import samples_to_sources
 
         dtype = np.float32
         n_samples = read_to - read_from + 1
@@ -311,13 +312,14 @@ class TimeReaderB423E(TimeReaderB423):
         messages = [f"Reading raw data from {dir_path}"]
         messages.append(f"Sampling rate {metadata.fs} Hz")
         # loop over B423 files and read data
-        df_to_read = samples_to_files(dir_path, metadata, read_from, read_to)
+        data_table = pd.DataFrame(data=metadata.data_table)
+        df_to_read = samples_to_sources(dir_path, data_table, read_from, read_to)
         data = np.empty(shape=(n_chans, n_samples), dtype=dtype)
         sample = 0
         for data_file, info in df_to_read.iterrows():
             file_from = info.loc["read_from"]
             file_to = info.loc["read_to"]
-            n_samples_file = info.loc["n_samples_file"]
+            n_samples_file = info.loc["n_samples_read"]
             data_byte_start = info.loc["data_byte_start"]
             mult = np.array([info.loc[B423E_MULT[idx]] for idx in chan_indices])
             add = np.array([info.loc[B423E_ADD[idx]] for idx in chan_indices])
