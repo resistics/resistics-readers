@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "resistics-readers"
-version = "0.1.0"
+version = "0.1.1"
 description = "Package with various instrument data format readers for resistics"
 authors = ["Neeraj Shah <resistics@outlook.com>"]
 maintainers = ["Neeraj Shah <resistics@outlook.com>"]
