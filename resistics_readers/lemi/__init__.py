@@ -1,5 +1,5 @@
 """
-Readers for Lemi data, including:
+Subpackage with readers for Lemi data, including:
 
 - Readers for time series data
 """

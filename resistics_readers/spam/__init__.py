@@ -1,5 +1,5 @@
 """
-Readers for SPAM data, including
+Subpackage with readers for SPAM data, including
 
 - Readers for time series data
 - Readers for calibration files

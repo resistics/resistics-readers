@@ -1,5 +1,5 @@
 """
-Readers for Metronix data, including:
+Subpackage with readers for Metronix data, including:
 
 - Readers for time series data
 - Readers for metronix style calibration files

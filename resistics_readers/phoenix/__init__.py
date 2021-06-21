@@ -1,5 +1,5 @@
 """
-Readers for Phoenix data, including:
+This subpackage contains readers for Phoenix data, including:
 
 - Readers for time series data from MTU5(A)
 """
