@@ -382,7 +382,9 @@ def get_chans_metadata(
             chan_dict["serial"] = table_data[f"{chan.upper()}SN"][-4:]
             chan_dict["sensor"] = "Phoenix"
             chan_dict["gain1"] = table_data["HGN"] * table_data["HATT"]
-            chan_dict["gain2"] = table_data["HNUM"] if "HNUM" in table_data else 1
+            chan_dict["gain2"] = (
+                (1000.0 / table_data["HNUM"]) if "HNUM" in table_data else 1
+            )
 
         if chan == "Ex":
             chan_dict["dx"] = float(table_data["EXLN"])
@@ -648,7 +650,7 @@ class TimeReaderTS(TimeReader):
         The important factors for scaling the data and defined in the TBL file
 
         - FSCV: the full scale value in volts [V8, RXU, MTU-A, 2.45V] [MTU, 6.40V];
-            full scale is 2^23 or 8,388,608 du
+          full scale is 2^23 or 8,388,608 du
         - ExLN: the length of the N–S dipole (Ex) in metres
         - EyLN: the length of the E–W dipole (Ey) in metres
         - EGN: the gain used for the E channels [MTU-A x1 x4 x16] [MTU x10 x40 x160]
@@ -658,13 +660,18 @@ class TimeReaderTS(TimeReader):
 
         du refers to the digital unit or the value out of the machine
 
+        Note that HNUM is only applicable to AMTC-30 and MTC-50. For other
+        systems, HNUM does not appear in the table file.
+
         These are read in and kept in the metadata
 
         - FSCV / 2^23 is in the scaling key for each channel
         - ExLn and EyLn are in their appropriate channel in metres
         - EGN is in gain1 for electric channels
         - HGN * HATT is in gain1 for magnetic channels
-        - HNUM is gain2 for magnetic channels
+        - If HNUM is in the table file, gain2 is set to (1000/HNUM) for magnetic
+          channels. If HNUM is not present, gain2 is set to 1 for magnetic
+          channels.
 
         To scale the electric channels, apply the following:
 
@@ -676,6 +683,7 @@ class TimeReaderTS(TimeReader):
         .. math::
 
             Ex = Ex * scaling * (1/gain1) * (1/dx) * (1000*1000)
+
             Ey = Ey * scaling * (1/gain1) * (1/dy) * (1000*1000)
 
         For the magnetic channels:
@@ -687,9 +695,11 @@ class TimeReaderTS(TimeReader):
 
         .. math::
 
-            Hx = Hx * scaling * (1/gain1) * (1000/gain2)
-            Hy = Hz * scaling * (1/gain1) * (1000/gain2)
-            Hy = Hz * scaling * (1/gain1) * (1000/gain2)
+            Hx = Hx * scaling * (1/gain1) * gain2
+
+            Hy = Hz * scaling * (1/gain1) * gain2
+
+            Hy = Hz * scaling * (1/gain1) * gain2
 
         Parameters
         ----------
@@ -734,11 +744,11 @@ class TimeReaderTS(TimeReader):
                 mult = (
                     chan_metadata.scaling
                     * (1 / chan_metadata.gain1)
-                    * (1000 / chan_metadata.gain2)
+                    * (chan_metadata.gain2)
                 )
                 time_data[chan] = time_data[chan] * mult
                 messages.append(
-                    f"Scaling {chan} by (FSCV/2^23) * (1/HGN) * (1/HATT) * (1000/HNUM) = {mult:.6f}"
+                    f"Scaling {chan} by (FSCV/2^23) * (1/HGN) * (1/HATT) [* (1000/HNUM)] = {mult:.6f}"
                 )
         record = self._get_record(messages)
         time_data.metadata.history.add_record(record)
