@@ -15,10 +15,12 @@ determined by the TS file and are usually as below (though they could change).
 
 It is usally the highest .TS file that is the continuous recording.
 
-.. warning::
+.. note::
 
-    The appropriate scaling for Phoenix data to return field units has not yet
-    been verified.
+    The scaling has not been thoroughly tested with multiple different Phoenix
+    instruments. Where in doubt, it is suggested to check the values from
+    this package versus those from Phoenix software. As more people use the
+    package, confidence will grow and bug fixes will take place as required.
 """
 from loguru import logger
 from typing import List, Dict, OrderedDict, Tuple, Any, BinaryIO, Optional
