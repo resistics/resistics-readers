@@ -9,6 +9,8 @@ Subpackages
 
    resistics_readers.lemi
    resistics_readers.metronix
+   resistics_readers.miniseed
+   resistics_readers.phoenix
    resistics_readers.spam
 
 Submodules
