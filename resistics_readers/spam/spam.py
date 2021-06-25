@@ -8,6 +8,16 @@ from resistics.time import TimeMetadata, TimeData, TimeReader
 from resistics_readers.multifile import TimeMetadataSingle, TimeMetadataMerge
 
 
+CHAN_MAP = {"Ex": "Ex", "Ey": "Ey", "Bx": "Hx", "By": "Hy", "Bz": "Hz"}
+CHAN_TYPES = {
+    "Ex": "electric",
+    "Ey": "electric",
+    "Bx": "magnetic",
+    "By": "magnetic",
+    "Bz": "magnetic",
+}
+
+
 def update_xtr_data(
     xtr_data: Dict[str, Any], section: str, key: str, val: str
 ) -> Dict[str, Any]:
@@ -337,14 +347,10 @@ class TimeReaderRAW(TimeReader):
         messages = ["Scaling raw data to physical units"]
         for chan in time_data.metadata.chans:
             chan_metadata = time_data.metadata.chans_metadata[chan]
-            if chan == "Ex":
-                dx_km = chan_metadata.dx / 1000
-                time_data[chan] = time_data[chan] / dx_km
-                messages.append(f"Dividing {chan} by dipole length {dx_km} km")
-            if chan == "Ey":
-                dy_km = chan_metadata.dy / 1000
-                time_data[chan] = time_data[chan] / dy_km
-                messages.append(f"Dividing {chan} by dipole length {dy_km} km")
+            if chan_metadata.electric():
+                dipole_dist_km = chan_metadata.dipole_dist / 1_000
+                time_data[chan] = time_data[chan] / dipole_dist_km
+                messages.append(f"Dividing {chan} by dipole length {dipole_dist_km} km")
         record = self._get_record(messages)
         time_data.metadata.history.add_record(record)
         return time_data
@@ -546,21 +552,20 @@ class TimeReaderXTR(TimeReaderRAW):
         Dict[Dict[str, Any]]
             Metadatas for channels as a dictionary
         """
-        from resistics.common import to_resistics_chan, is_electric, is_magnetic
-
         chans = [x.split()[1] for x in xtr_data["CHANNAME"]["NAME"]]
-        chans = [to_resistics_chan(x) for x in chans]
-
         xtr_chans_metadata = {}
         for idx, chan in enumerate(chans):
             chan_metadata = {
+                "name": CHAN_MAP[chan],
                 "data_files": xtr_data["FILE"]["NAME"].split()[0],
             }
+            chan_metadata["chan_type"] = CHAN_TYPES[chan]
+            chan_metadata["chan_source"] = chan
             data_split = xtr_data["DATA"]["CHAN"][idx].split()
-            chan_metadata["scaling"] = self._get_xtr_chan_scaling(chan, data_split)
-            chan_to_spacing = {"Ex": "dx", "Ey": "dy", "Ez": "dz"}
-            if chan in chan_to_spacing:
-                chan_metadata[chan_to_spacing[chan]] = float(data_split[3])
+            chan_metadata["scaling"] = self._get_xtr_chan_scaling(
+                CHAN_TYPES[chan], data_split
+            )
+            chan_metadata["dipole_dist"] = float(data_split[3])
             # sensors
             sensor_section = f"200{idx + 1}003"
             sensor_split = xtr_data[sensor_section]["MODULE"].split()
@@ -570,22 +575,17 @@ class TimeReaderXTR(TimeReaderRAW):
             split = cal_file.split("-")
             info = split[split.index("TYPE") + 1]
             chan_metadata["sensor"] = info.split("_")[0]
-            if is_electric(chan):
-                chan_metadata["echopper"] = "LF" in info
-            if is_magnetic(chan):
-                chan_metadata["hchopper"] = "LF" in info
+            chan_metadata["chopper"] = "LF" in info
             # add to main dictionary
-            xtr_chans_metadata[chan] = chan_metadata
+            xtr_chans_metadata[CHAN_MAP[chan]] = chan_metadata
         return xtr_chans_metadata
 
-    def _get_xtr_chan_scaling(self, chan: str, data_split: List[str]) -> float:
+    def _get_xtr_chan_scaling(self, chan_type: str, data_split: List[str]) -> float:
         """Get the correction required for field units"""
-        from resistics.common import is_electric, is_magnetic
-
         scaling = float(data_split[-2])
-        if is_electric(chan):
+        if chan_type == "electric":
             scaling = -1000.0 * scaling * 1000
-        if is_magnetic(chan):
+        if chan_type == "magnetic":
             scaling = -1000
         return scaling
 
