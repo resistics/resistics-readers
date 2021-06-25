@@ -28,6 +28,15 @@ from resistics.time import ChanMetadata, TimeMetadata, TimeData
 from resistics.time import TimeProcess, TimeWriterNumpy
 
 
+CHAN_TYPES = {
+    "Ex": "electric",
+    "Ey": "electric",
+    "Hx": "magnetic",
+    "Hy": "magnetic",
+    "Hz": "magnetic",
+}
+
+
 class NoDataInInterval(Exception):
     def __init__(
         self,
@@ -395,7 +404,10 @@ def get_time_data(
             fs, streams, streams_to_read, from_time, n_samples
         )
         chans_metadata[chans[idx]] = ChanMetadata(
-            data_files=list(streams_to_read["data_file"].values.tolist())
+            name=chans[idx],
+            data_files=list(streams_to_read["data_file"].values.tolist()),
+            chan_type=CHAN_TYPES[chans[idx]],
+            chan_source=trace_id,
         )
     metadata = TimeMetadata(
         fs=fs,
