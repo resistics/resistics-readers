@@ -161,9 +161,9 @@ def _merge_metadata(
     for chan in metadata.chans:
         metadata.chans_metadata[chan].data_files = data_files
         if chan == "Ex":
-            metadata.chans_metadata[chan].dx = dx
+            metadata.chans_metadata[chan].dipole_dist = dx
         if chan == "Ey":
-            metadata.chans_metadata[chan].dy = dy
+            metadata.chans_metadata[chan].dipole_dist = dy
     return metadata
 
 
@@ -432,14 +432,9 @@ class TimeReaderB423E(TimeReaderB423):
             chan_metadata = time_data.metadata.chans_metadata[chan]
             time_data[chan] = time_data[chan] / 1000.0
             messages.append(f"Dividing chan {chan} by 1000 to convert from uV to mV")
-            if chan == "Ex":
-                dx_km = chan_metadata.dx / 1000
-                time_data[chan] = time_data[chan] / dx_km
-                messages.append(f"Dividing {chan} by dipole length {dx_km:.6f} km")
-            if chan == "Ey":
-                dy_km = chan_metadata.dy / 1000
-                time_data[chan] = time_data[chan] / dy_km
-                messages.append(f"Dividing {chan} by dipole length {dy_km:.6f} km")
+            dipole_dist_km = chan_metadata.dipole_dist / 1_000
+            time_data[chan] = time_data[chan] / dipole_dist_km
+            messages.append(f"Dividing {chan} by dipole length {dipole_dist_km} km")
         record = self._get_record(messages)
         time_data.metadata.history.add_record(record)
         return time_data

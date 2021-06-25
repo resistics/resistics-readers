@@ -27,6 +27,17 @@ from resistics_readers.multifile import validate_consistency, validate_continuou
 from resistics_readers.multifile import TimeMetadataSingle, TimeMetadataMerge
 
 B423_CHANS = ["Hx", "Hy", "Hz", "Ex", "Ey"]
+B423_CHAN_TYPES = {
+    "E1": "electric",
+    "E2": "electric",
+    "E3": "electric",
+    "E4": "electric",
+    "Ex": "electric",
+    "Ey": "electric",
+    "Hx": "magnetic",
+    "Hy": "magnetic",
+    "Hz": "magnetic",
+}
 B423_RECORD_BYTES = 30
 B423_HEADER_LENGTH = 1024
 B423_MULT = {"Hx": "Kmx", "Hy": "Kmy", "Hz": "Kmz", "Ex": "Ke1", "Ey": "Ke2"}
@@ -45,9 +56,9 @@ class TimeMetadataB423(TimeMetadataSingle):
 def make_subdir_B423_metadata(
     dir_path: Path,
     fs: float,
-    hx_sensor: int = 0,
-    hy_sensor: int = 0,
-    hz_sensor: int = 0,
+    hx_serial: int = 0,
+    hy_serial: int = 0,
+    hz_serial: int = 0,
     h_gain: int = 1,
     dx: float = 1,
     dy: float = 1,
@@ -62,12 +73,12 @@ def make_subdir_B423_metadata(
         The path to the folder
     fs : float
         The sampling frequency, Hz
-    hx_sensor : str, optional
-        The x direction magnetic sensor, used for calibration
-    hy_sensor : str, optional
-        The y direction magnetic sensor, used for calibration
-    hz_sensor : str, optional
-        The z direction magnetic sensor, used for calibration
+    hx_serial : str, optional
+        The x direction magnetic serial, used for calibration
+    hy_serial : str, optional
+        The y direction magnetic serial, used for calibration
+    hz_serial : str, optional
+        The z direction magnetic serial, used for calibration
     h_gain : int
         Any gain on the magnetic channels which will need to be removed
     dx : float, optional
@@ -85,15 +96,15 @@ def make_subdir_B423_metadata(
     else:
         folder_paths = [dir_path / folder for folder in folders]
     for folder in folder_paths:
-        make_B423_metadata(folder, fs, hx_sensor, hy_sensor, hz_sensor, h_gain, dx, dy)
+        make_B423_metadata(folder, fs, hx_serial, hy_serial, hz_serial, h_gain, dx, dy)
 
 
 def make_B423_metadata(
     dir_path: Path,
     fs: float,
-    hx_sensor: int = 0,
-    hy_sensor: int = 0,
-    hz_sensor: int = 0,
+    hx_serial: int = 0,
+    hy_serial: int = 0,
+    hz_serial: int = 0,
     h_gain: int = 1,
     dx: float = 1,
     dy: float = 1,
@@ -107,12 +118,12 @@ def make_B423_metadata(
         The path to the measurement
     fs : float
         The sampling frequency, Hz
-    hx_sensor : str, optional
-        The x direction magnetic sensor, used for calibration
-    hy_sensor : str, optional
-        The y direction magnetic sensor, used for calibration
-    hz_sensor : str, optional
-        The z direction magnetic sensor, used for calibration
+    hx_serial : str, optional
+        The x direction magnetic serial, used for calibration
+    hy_serial : str, optional
+        The y direction magnetic serial, used for calibration
+    hz_serial : str, optional
+        The z direction magnetic serial, used for calibration
     h_gain : int
         Any gain on the magnetic channels which will need to be removed
     dx : float, optional
@@ -124,7 +135,7 @@ def make_B423_metadata(
     validate_consistency(dir_path, metadata_list)
     validate_continuous(dir_path, metadata_list)
     metadata = _merge_metadata(
-        metadata_list, hx_sensor, hy_sensor, hz_sensor, h_gain, dx, dy
+        metadata_list, hx_serial, hy_serial, hz_serial, h_gain, dx, dy
     )
     logger.info(f"Writing metadata in {dir_path}")
     metadata.write(dir_path / "metadata.json")
@@ -224,7 +235,11 @@ def _read_B423_headers(
     time_dict["chans"] = chans
     time_dict["chans_metadata"] = {}
     for chan in chans:
-        time_dict["chans_metadata"][chan] = {"data_files": [name]}
+        time_dict["chans_metadata"][chan] = {
+            "name": chan,
+            "data_files": [name],
+            "chan_type": B423_CHAN_TYPES[chan],
+        }
     return TimeMetadataB423(**time_dict)
 
 
@@ -250,7 +265,7 @@ def _read_B423_ascii_headers(metadata_bytes: bytes) -> Dict[str, float]:
     # loxcation information
     location = [x for x in metadata_lines if ("Lat" in x or "Lon" in x or "Alt" in x)]
     location_dict = {x[0:3]: x[3:].split(",")[0] for x in location}
-    location_dict = {k: float(v.strip()) for k, v in location.items()}
+    location_dict = {k: float(v.strip()) for k, v in location_dict.items()}
     metadata.update(location_dict)
     return metadata
 
@@ -267,16 +282,14 @@ def _get_B423_time(time_bytes: bytes, fs: float) -> RSDateTime:
 
 def _merge_metadata(
     metadata_list: List[TimeMetadataB423],
-    hx_sensor: int = 0,
-    hy_sensor: int = 0,
-    hz_sensor: int = 0,
+    hx_serial: int = 0,
+    hy_serial: int = 0,
+    hz_serial: int = 0,
     h_gain: int = 1,
     dx: float = 1,
     dy: float = 1,
 ) -> TimeMetadata:
     """Merge the metadata list into a TimeMetadata"""
-    from resistics.common import is_magnetic
-
     metadata = TimeMetadata(**metadata_list[0].dict())
     metadata.first_time = min([x.first_time for x in metadata_list])
     metadata.last_time = max([x.last_time for x in metadata_list])
@@ -284,15 +297,15 @@ def _merge_metadata(
 
     # channel headers
     data_files = [x.data_file for x in metadata_list]
-    sensors = {"Hx": hx_sensor, "Hy": hy_sensor, "Hz": hz_sensor, "Ex": "0", "Ey": "0"}
-    posX = {"Hx": 1, "Hy": 1, "Hz": 1, "Ex": dx, "Ey": 1}
-    posY = {"Hx": 1, "Hy": 1, "Hz": 1, "Ex": 1, "Ey": dy}
+    serials = {"Hx": hx_serial, "Hy": hy_serial, "Hz": hz_serial}
+    dipoles = {"Ex": dx, "Ey": dy}
     for chan in metadata.chans:
         metadata.chans_metadata[chan].data_files = data_files
-        metadata.chans_metadata[chan].gain1 = h_gain if is_magnetic(chan) else 1
-        metadata.chans_metadata[chan].dx = posX[chan]
-        metadata.chans_metadata[chan].dy = posY[chan]
-        metadata.chans_metadata[chan].serial = sensors[chan]
+        if metadata.chans_metadata[chan].magnetic():
+            metadata.chans_metadata[chan].gain1 = h_gain
+            metadata.chans_metadata[chan].serial = serials[chan]
+        if metadata.chans_metadata[chan].electric():
+            metadata.chans_metadata[chan].dipole_dist = dipoles[chan]
     return metadata
 
 
@@ -567,26 +580,19 @@ class TimeReaderB423(TimeReader):
         TimeData
             Time data in field units
         """
-        from resistics.common import is_electric, is_magnetic
-
         logger.info("Applying scaling to data to give field units")
         messages = ["Scaling raw data to physical units"]
         for chan in time_data.metadata.chans:
             chan_metadata = time_data.metadata.chans_metadata[chan]
-            if is_electric(chan):
+            if chan_metadata.electric():
                 time_data[chan] = time_data[chan] / 1000.0
                 messages.append(
                     f"Dividing chan {chan} by 1000 to convert from uV to mV"
                 )
-            if chan == "Ex":
-                dx_km = chan_metadata.dx / 1000
-                time_data[chan] = time_data[chan] / dx_km
-                messages.append(f"Dividing {chan} by dipole length {dx_km:.6f} km")
-            if chan == "Ey":
-                dy_km = chan_metadata.dy / 1000
-                time_data[chan] = time_data[chan] / dy_km
-                messages.append(f"Dividing {chan} by dipole length {dy_km:.6f} km")
-            if is_magnetic(chan):
+                dipole_dist_km = chan_metadata.dipole_dist / 1_000
+                time_data[chan] = time_data[chan] / dipole_dist_km
+                messages.append(f"Dividing {chan} by dipole length {dipole_dist_km} km")
+            if chan_metadata.magnetic():
                 gain = chan_metadata.gain1
                 time_data[chan] = time_data[chan] / gain
                 messages.append(f"Dividing chan {chan} by {gain} to remove gain")
