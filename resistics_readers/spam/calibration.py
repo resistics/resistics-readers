@@ -1,4 +1,3 @@
-from loguru import logger
 from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import re
@@ -6,11 +5,9 @@ import numpy as np
 import pandas as pd
 from xml.etree.ElementTree import Element  # noqa: S405
 import defusedxml.ElementTree as ET
-from resistics.errors import CalibrationFileNotFound
-from resistics.common import is_electric
+from resistics.time import ChanMetadata
 from resistics.calibrate import SensorCalibrationReader, CalibrationData
 from resistics.spectra import SpectraMetadata
-from resistics.time import ChanMetadata
 
 
 class SensorCalibration_RSP_RSPX_Base(SensorCalibrationReader):
@@ -19,26 +16,26 @@ class SensorCalibration_RSP_RSPX_Base(SensorCalibrationReader):
     file_str: str = "Metronix_Coil-----TYPE-$sensor_$chopper-ID-$serial$extension"
     """The file string to search for. Various parameters will be substituted"""
 
-    def _get_path(
-        self, dir_path: Path, chan_metadata: ChanMetadata, chopper_str: str
-    ) -> Path:
+    def _get_path(self, dir_path: Path, metadata: SpectraMetadata, chan: str) -> Path:
         """
         Get the path to the calibration file
 
         Parameters
         ----------
         dir_path : Path
-            The directory path with calibration data
-        chan_metadata : ChanMetadata
-            The channel metadata
-        chopper_str : str
-            The chopper string
+            The directory  path to look for calibration files
+        metadata : SpectraMetadata
+            SpectraMetadata with data information
+        chan : str
+            The channel to calibrate
 
         Returns
         -------
         Path
-            The file path
+            The path to the calibration file
         """
+        chan_metadata = metadata.chans_metadata[chan]
+        chopper_str = "LF" if chan_metadata.chopper else "HF"
         sensor_str = re.sub("[^0-9]", "", chan_metadata.sensor)
         sensor_str = f"{int(sensor_str):03d}"
         serial_str = f"{int(chan_metadata.serial):06d}"
@@ -76,42 +73,24 @@ class SensorCalibrationRSP(SensorCalibration_RSP_RSPX_Base):
 
     extension: str = ".RSP"
 
-    def run(
-        self, dir_path: Path, metadata: SpectraMetadata, chan: str
+    def read_calibration_data(
+        self, file_path: Path, chan_metadata: ChanMetadata
     ) -> CalibrationData:
         """
         Read data from a RSP calibration file
 
         Parameters
         ----------
-        dir_path : Path
-            Calibration data directory
-        metadata : SpectraMetadata
-            The data metadata
-        chan : str
-            The channel to calibrate
+        file_path : Path
+            The file path of the calibration file
+        chan_metadata : ChanMetadata
+            The channel metadata for the channel to be calibrated
 
         Returns
         -------
         CalibrationData
-            A calibration data object
-
-        Raises
-        ------
-        CalibrationFileNotFound
-            If unable to find the calibration file
+            The calibration data
         """
-        chan_metadata = metadata.chans_metadata[chan]
-        if is_electric(chan):
-            chopper_str = "LF" if chan_metadata.echopper else "HF"
-        else:
-            chopper_str = "LF" if chan_metadata.hchopper else "HF"
-        file_path = self._get_path(dir_path, chan_metadata, chopper_str)
-        logger.info(f"Searching file {file_path.name} in {dir_path}")
-        if not file_path.exists():
-            raise CalibrationFileNotFound(dir_path, file_path)
-
-        logger.info(f"Reading file {file_path.name}")
         with file_path.open("r") as f:
             lines = f.readlines()
         lines = [x.strip() for x in lines]
@@ -161,7 +140,7 @@ class SensorCalibrationRSP(SensorCalibration_RSP_RSPX_Base):
     def _read_data(self, lines: List[str]) -> pd.DataFrame:
         """Read data from calibration file"""
         read_from = self._get_read_from(lines)
-        data_lines = self._get_data_lines(lines, read_from + 2)
+        data_lines = self._get_data_lines(lines, read_from)
         data = np.array([x.split() for x in data_lines], dtype=np.float32)
         df = pd.DataFrame(data=data, columns=["frequency", "magnitude", "phase"])
         return df.set_index("frequency").sort_index()
@@ -203,38 +182,24 @@ class SensorCalibrationRSPX(SensorCalibration_RSP_RSPX_Base):
 
     extension: str = ".RSPX"
 
-    def run(
-        self, dir_path: Path, metadata: SpectraMetadata, chan: str
+    def read_calibration_data(
+        self, file_path: Path, chan_metadata: ChanMetadata
     ) -> CalibrationData:
         """
         Read RSPX file
 
         Parameters
         ----------
-        dir_path : Path
-            Calibration data directory
-        metadata : SpectraMetadata
-            The data metadata
-        chan : str
-            The channel to calibrate
+        file_path : Path
+            The file path of the calibration file
+        chan_metadata : ChanMetadata
+            The channel metadata for the channel to be calibrated
 
         Returns
         -------
         CalibrationData
-            A calibration data object
-
-        Raises
-        ------
-        CalibrationFileNotFound
-            If unable to find the calibration file
+            The calibration data
         """
-        chan_metadata = metadata.chans_metadata[chan]
-        chopper_str = "LF" if chan_metadata.chopper else "HF"
-        file_path = self._get_path(dir_path, chan_metadata, chopper_str)
-        logger.info(f"Searching file {file_path.name} in {dir_path}")
-        if not file_path.exists():
-            raise CalibrationFileNotFound(dir_path, file_path)
-
         root = ET.parse(file_path).getroot()
         data_dict = self._read_metadata(root)
         data_dict["chopper"] = self._get_chopper(file_path)

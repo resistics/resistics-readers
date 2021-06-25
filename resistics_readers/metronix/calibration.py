@@ -4,10 +4,9 @@ from pathlib import Path
 import math
 import numpy as np
 import pandas as pd
-from resistics.errors import CalibrationFileNotFound, CalibrationFileReadError
-from resistics.common import is_electric, is_magnetic
+from resistics.errors import CalibrationFileReadError
+from resistics.time import ChanMetadata
 from resistics.calibrate import SensorCalibrationReader, CalibrationData
-from resistics.spectra import SpectraMetadata
 
 
 class SensorCalibrationMetronix(SensorCalibrationReader):
@@ -38,43 +37,31 @@ class SensorCalibrationMetronix(SensorCalibrationReader):
     extend_low: float = 0.00001
     extend_high: float = 1000000
 
-    def run(
-        self, dir_path: Path, metadata: SpectraMetadata, chan: str
+    def read_calibration_data(
+        self, file_path: Path, chan_metadata: ChanMetadata
     ) -> CalibrationData:
         """
         Read data from metronix calibration file
 
         Parameters
         ----------
-        dir_path : Path
-            Calibration data directory
-        metadata : SpectraMetadata
-            The data metadata
-        chan : str
-            The channel to calibrate
+        file_path : Path
+            The file path of the calibration file
+        chan_metadata : ChanMetadata
+            The channel metadata for the channel to be calibrated
 
         Returns
         -------
         CalibrationData
-            A calibration data object
-
-        Raises
-        ------
-        CalibrationFileNotFound
-            If unable to find the calibration file
+            The calibration data
         """
-        file_path = self._get_path(dir_path, metadata, chan)
-        logger.info(f"Searching file {file_path.name} in {dir_path}")
-        if not file_path.exists():
-            raise CalibrationFileNotFound(dir_path, file_path)
-
-        logger.info(f"Reading file {file_path.name}")
         with file_path.open("r") as f:
             lines = f.readlines()
         lines = [x.strip() for x in lines]
-        data_dict = self._read_metadata(lines, metadata, chan)
-        chopper = self._get_chopper(metadata, chan)
+        data_dict = self._read_metadata(lines)
+        chopper = chan_metadata.chopper
         data_dict["chopper"] = chopper
+        logger.debug(f"Reading calibration data for chopper = {chopper}")
         df = self._read_data(file_path, lines, chopper)
         data_dict["frequency"] = df.index.values.tolist()
         data_dict["magnitude"] = df["magnitude"].values.tolist()
@@ -82,9 +69,7 @@ class SensorCalibrationMetronix(SensorCalibrationReader):
         data_dict["file_path"] = file_path
         return CalibrationData(**data_dict)
 
-    def _read_metadata(
-        self, lines: List[str], metadata: SpectraMetadata, chan: str
-    ) -> Dict[str, Any]:
+    def _read_metadata(self, lines: List[str]) -> Dict[str, Any]:
         """Get the calibration data metadata"""
         sensor, serial = self._get_sensor_details(lines)
         return {
@@ -116,15 +101,6 @@ class SensorCalibrationMetronix(SensorCalibrationReader):
         except Exception:
             logger.warning("Unable to read serial number from calibration file")
         return sensor, serial
-
-    def _get_chopper(self, metadata: SpectraMetadata, chan: str) -> bool:
-        """True if chopper on, otherwise False"""
-        if is_electric(chan):
-            return metadata.chans_metadata[chan].echopper
-        if is_magnetic(chan):
-            return metadata.chans_metadata[chan].hchopper
-        logger.error(f"Channel {chan} not recognised as either electric or magnetic")
-        return False
 
     def _read_data(
         self, file_path: Path, lines: List[str], chopper: bool
