@@ -47,6 +47,14 @@ TAG_SIZE = 32
 # three byte two's complement for the data
 SAMPLE_SIZE = 3
 SAMPLE_DTYPE = np.int32
+# channel type mapping
+CHAN_TYPES = {
+    "Ex": "electric",
+    "Ey": "electric",
+    "Hx": "magnetic",
+    "Hy": "magnetic",
+    "Hz": "magnetic",
+}
 
 
 class TimeMetadataTS(TimeMetadata):
@@ -365,9 +373,6 @@ def get_chans_metadata(
     Dict[str, Any]
         Channel metadata for each channel
     """
-    from resistics.common import is_magnetic
-
-    # get the channel ordering from the headers
     chans = ["Ex", "Ey", "Hx", "Hy", "Hz"]
     order = [table_data[f"CH{chan.upper()}"] for chan in chans]
     _order, chans = (
@@ -376,23 +381,23 @@ def get_chans_metadata(
     chans_dict = {}
     for chan in chans:
         chan_dict = {}
+        chan_dict["name"] = chan
         chan_dict["data_files"] = [ts_file]
+        chan_dict["chan_type"] = CHAN_TYPES[chan]
         # to convert integers to machine volts
         chan_dict["scaling"] = table_data["FSCV"] / np.power(2, 23)
 
-        if is_magnetic(chan):
+        if CHAN_TYPES[chan] == "magnetic":
             chan_dict["serial"] = table_data[f"{chan.upper()}SN"][-4:]
             chan_dict["sensor"] = "Phoenix"
             chan_dict["gain1"] = table_data["HGN"] * table_data["HATT"]
             chan_dict["gain2"] = (
                 (1000.0 / table_data["HNUM"]) if "HNUM" in table_data else 1
             )
-
-        if chan == "Ex":
-            chan_dict["dx"] = float(table_data["EXLN"])
-            chan_dict["gain1"] = table_data["EGN"]
-        if chan == "Ey":
-            chan_dict["dy"] = float(table_data["EYLN"])
+        dipoles = {"Ex": "EXLN", "Ey": "EYLN"}
+        if CHAN_TYPES[chan] == "electric":
+            dipole_dist_key = dipoles[chan]
+            chan_dict["dipole_dist"] = float(table_data[dipole_dist_key])
             chan_dict["gain1"] = table_data["EGN"]
 
         chans_dict[chan] = ChanMetadata(**chan_dict)
@@ -713,36 +718,23 @@ class TimeReaderTS(TimeReader):
         TimeData
             Time data in field units
         """
-        from resistics.common import is_magnetic
-
         logger.info("Applying scaling to data to give field units")
         logger.warning("Phoenix scaling still requires validation")
         messages = ["Scaling raw data to physical units"]
         for chan in time_data.metadata.chans:
             chan_metadata = time_data.metadata.chans_metadata[chan]
-            if chan == "Ex":
+            if chan_metadata.electric():
                 mult = (
                     chan_metadata.scaling
                     * (1 / chan_metadata.gain1)
-                    * (1 / chan_metadata.dx)
+                    * (1 / chan_metadata.dipole_dist)
                     * (1_000 * 1_000)
                 )
                 time_data[chan] = time_data[chan] * mult
                 messages.append(
                     f"Scaling {chan} by (FSCV/2^23) * (1/EGN) * (1/E_LN) * (1000*1000) = {mult:.6f}"
                 )
-            if chan == "Ey":
-                mult = (
-                    chan_metadata.scaling
-                    * (1 / chan_metadata.gain1)
-                    * (1 / chan_metadata.dy)
-                    * (1_000 * 1_000)
-                )
-                time_data[chan] = time_data[chan] * mult
-                messages.append(
-                    f"Scaling {chan} by (FSCV/2^23) * (1/EGN) * (1/E_LN) * (1000*1000) = {mult:.6f}"
-                )
-            if is_magnetic(chan):
+            if chan_metadata.magnetic():
                 mult = (
                     chan_metadata.scaling
                     * (1 / chan_metadata.gain1)
