@@ -10,6 +10,35 @@ import numpy as np
 from resistics.sampling import to_datetime, to_timedelta, to_n_samples
 from resistics.time import TimeMetadata, TimeData, TimeReader
 
+ELECTRIC_CHANS = ["Ex", "Ey", "Ez"]
+MAGNETIC_CHANS = ["Hx", "Hy", "Hz"]
+DIPOLES = {
+    "Ex": ["pos_x1", "pos_x2"],
+    "Ey": ["pos_y1", "pos_y2"],
+    "Ez": ["pos_z1", "pos_z2"],
+}
+
+
+def get_chan_type(chan: str) -> str:
+    """
+    Get the channel type
+
+    Parameters
+    ----------
+    chan : str
+        The name of the channel
+
+    Returns
+    -------
+    str
+        The channel type
+    """
+    if chan in ELECTRIC_CHANS:
+        return "electric"
+    if chan in MAGNETIC_CHANS:
+        return "magnetic"
+    return "unknown"
+
 
 class TimeReaderATS(TimeReader):
     r"""Data reader for ATS formatted data
@@ -84,7 +113,7 @@ class TimeReaderATS(TimeReader):
 
         xml_files = list(dir_path.glob("*.xml"))
         if len(xml_files) != 1:
-            raise MetadataReadError(dir_path, "> 1 xml file in data directory")
+            raise MetadataReadError(dir_path, f"Num xml files {len(xml_files)} != 1")
         metadata_path = xml_files[0]
         root = ET.parse(metadata_path).getroot()
         time_dict = self._read_common_metadata(root)
@@ -201,26 +230,28 @@ class TimeReaderATS(TimeReader):
             chan_metadata = {}
             # out section
             chan = chan_out.find("channel_type").text
+            chan_metadata["name"] = chan
             chan_metadata["data_files"] = chan_out.find("ats_data_file").text
+            chan_metadata["chan_type"] = get_chan_type(chan)
+            chan_metadata["chan_source"] = chan
             chan_metadata["n_samples"] = int(chan_out.find("num_samples").text)
             chan_metadata["sensor"] = chan_out.find("sensor_type").text
             chan_metadata["serial"] = chan_out.find("sensor_sernum").text
             chan_metadata["scaling"] = chan_out.find("ts_lsb").text
-            x1 = float(chan_out.find("pos_x1").text)
-            x2 = float(chan_out.find("pos_x2").text)
-            y1 = float(chan_out.find("pos_y1").text)
-            y2 = float(chan_out.find("pos_y2").text)
-            z1 = float(chan_out.find("pos_z1").text)
-            z2 = float(chan_out.find("pos_z2").text)
-            chan_metadata["dx"] = abs(x1) + abs(x2)
-            chan_metadata["dy"] = abs(y1) + abs(y2)
-            chan_metadata["dz"] = abs(z1) + abs(z2)
-            # in section
             chan_metadata["gain1"] = chan_in.find("gain_stage1").text
             chan_metadata["gain2"] = chan_in.find("gain_stage2").text
-            chan_metadata["hchopper"] = chan_in.find("hchopper").text
-            chan_metadata["echopper"] = chan_in.find("echopper").text
-            # add data
+
+            if chan_metadata["chan_type"] == "electric":
+                d1_key = DIPOLES[chan][0]
+                d2_key = DIPOLES[chan][1]
+                d1 = float(chan_out.find(d1_key).text)
+                d2 = float(chan_out.find(d2_key).text)
+                chan_metadata["dipole_dist"] = abs(d1) + abs(d2)
+                chan_metadata["chopper"] = chan_in.find("echopper").text
+
+            if chan_metadata["chan_type"] == "magnetic":
+                chan_metadata["chopper"] = chan_in.find("hchopper").text
+
             chans_dict[chan] = chan_metadata
         return chans_dict
 
@@ -363,14 +394,10 @@ class TimeReaderATS(TimeReader):
             lsb = chan_metadata.scaling
             time_data[chan] = time_data[chan] * lsb
             messages.append(f"Scaling {chan} by least significant bit {lsb}")
-            if chan == "Ex":
-                dx_km = chan_metadata.dx / 1000
-                time_data[chan] = time_data[chan] / dx_km
-                messages.append(f"Dividing {chan} by dipole length {dx_km} km")
-            if chan == "Ey":
-                dy_km = chan_metadata.dy / 1000
-                time_data[chan] = time_data[chan] / dy_km
-                messages.append(f"Dividing {chan} by dipole length {dy_km} km")
+            if chan_metadata.electric():
+                dipole_dist_km = chan_metadata.dipole_dist / 1_000
+                time_data[chan] = time_data[chan] / dipole_dist_km
+                messages.append(f"Dividing {chan} by dipole length {dipole_dist_km} km")
         record = self._get_record(messages)
         time_data.metadata.history.add_record(record)
         return time_data
