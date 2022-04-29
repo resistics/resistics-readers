@@ -591,7 +591,7 @@ class TimeReaderXTR(TimeReaderRAW):
 
     def _generate_table(self, metadata_list: List[TimeMetadataXTR]) -> pd.DataFrame:
         """
-        Generate a table mapping RAW file to  first time, last time, number of
+        Generate a table mapping RAW file to first time, last time, number of
         samples, data byte offsets and scalings
 
         Parameters
