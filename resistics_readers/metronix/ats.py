@@ -336,7 +336,7 @@ class TimeReaderATS(TimeReader):
             messages.append(f"Reading data for {chan} from {chan_path.name}")
             data[idx] = np.memmap(
                 chan_path, dtype=dtype, mode="r", offset=byteoff, shape=(n_samples)
-            )
+            ).astype(np.float32)
         metadata = self._get_return_metadata(metadata, read_from, read_to)
         messages.append(f"From sample, time: {read_from}, {str(metadata.first_time)}")
         messages.append(f"To sample, time: {read_to}, {str(metadata.last_time)}")
